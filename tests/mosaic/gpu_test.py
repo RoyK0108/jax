@@ -492,6 +492,28 @@ class MemRefTest(TestCase):
     self.assertEqual(ptx().count("%cluster_ctaid.y"), 1)
     self.assertEqual(ptx().count("%ctaid.y"), 1)
 
+  def test_programmatic_serialization_mlir(self):
+    def body(ctx, src, dst, _):
+      del ctx
+      copy(src, dst)
+
+    x = jax.ShapeDtypeStruct((128,), jnp.float32)
+    module, _, _, _ = core._lower_as_gpu_kernel(
+        body,
+        grid=(1, 1, 1),
+        cluster=(1, 1, 1),
+        block=(128, 1, 1),
+        in_shapes=(x,),
+        out_shape=x,
+        inout_shape=(),
+        smem_scratch_shape=(),
+        lowering_semantics=mgpu.LoweringSemantics.Lane,
+        module_name="test_module",
+        kernel_name="test_kernel",
+        programmatic_serialization=True,
+    )
+    self.assertIn("mosaic_gpu.programmatic_serialization = true", str(module))
+
   @parameterized.parameters(gpu.Dimension.x, gpu.Dimension.y)
   def test_cluster_ref_read(self, dim):
     index = ir.IndexType.get()

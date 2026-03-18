@@ -123,6 +123,8 @@ class CompilerParams:
       events than this.
     profile_dir: The directory to which profiling traces will be written to.
     profile_trace_scope: The scope at which traces are collected (WARP or WARPGROUP).
+    lowering_semantics: The lowering semantics to use for the kernel. Defaults
+      to `LoweringSemantics.Lane`.
   """
   approx_math: bool = False
   dimension_semantics: Sequence[DimensionSemantics] | None = None

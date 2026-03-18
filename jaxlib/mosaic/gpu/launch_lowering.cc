@@ -41,7 +41,6 @@ limitations under the License.
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
-#include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/Location.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/TypeRange.h"
@@ -53,7 +52,6 @@ limitations under the License.
 #include "mlir/Pass/PassRegistry.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
-#include "mlir/Support/TypeID.h"
 #include "jaxlib/mosaic/pass_boilerplate.h"
 
 namespace mosaic {
@@ -107,9 +105,9 @@ void emitRuntimeDecls(mlir::ModuleOp module) {
       decl_builder, module.getLoc(),
       decl_builder.getStringAttr("mosaic_gpu_launch_kernel"),
       mlir::FunctionType::get(module.getContext(),
-                              {ptr_ty, i32, i32, i32, i32, i32, i32, i32, i32,
-                               i32, i32, ptr_ty, ptr_ty},
-                              {}),
+          {ptr_ty, i32, i32, i32, i32, i32, i32, i32, i32,
+           i32, i32, decl_builder.getI1Type(), ptr_ty, ptr_ty},
+          {}),
       decl_builder.getStringAttr("private"), /*arg_attr=*/nullptr,
       /*res_attrs=*/nullptr);
   mlir::func::FuncOp::create(
@@ -217,7 +215,8 @@ void buildInitFunction(mlir::OpBuilder& module_builder,
 
 mlir::LogicalResult launchPreloadedKernel(mlir::func::FuncOp func,
                                           mlir::gpu::LaunchFuncOp launch,
-                                          mlir::Value kernel_handle) {
+                                          mlir::Value kernel_handle,
+                                          bool programmatic_serialization) {
   // Lower gpu.launch_func to a call to mgpuLaunchKernel.
   mlir::OpBuilder builder(launch);
   mlir::Value dynamic_smem = launch.getDynamicSharedMemorySize();
@@ -246,12 +245,16 @@ mlir::LogicalResult launchPreloadedKernel(mlir::func::FuncOp func,
         builder, launch.getLoc(), builder.getI32Type(),
         builder.getI32IntegerAttr(0));
   }
+  mlir::Value programmatic_serialization_val = mlir::LLVM::ConstantOp::create(
+      builder, launch.getLoc(), builder.getI1Type(),
+      builder.getBoolAttr(programmatic_serialization));
   mlir::Value stream = launch.getAsyncObject();
   mlir::func::CallOp::create(
       builder, launch.getLoc(), "mosaic_gpu_launch_kernel", mlir::TypeRange{},
       mlir::ValueRange{kernel_handle, grid.x, grid.y, grid.z, cluster.x,
                        cluster.y, cluster.z, block.x, block.y, block.z,
-                       dynamic_smem, stream, arg_ptr_array});
+                       dynamic_smem, programmatic_serialization_val, stream,
+                       arg_ptr_array});
   return mlir::success();
 }
 
@@ -267,6 +270,8 @@ class GpuLaunchLoweringPass
     mlir::ModuleOp module = getOperation();
     auto ptr_ty = mlir::LLVM::LLVMPointerType::get(module.getContext());
     emitRuntimeDecls(module);
+    bool programmatic_serialization =
+        module->hasAttr("mosaic_gpu.programmatic_serialization");
     for (mlir::Operation& op : *module.getBody()) {
       if (auto func = mlir::dyn_cast<mlir::func::FuncOp>(&op)) {
         if (func.isDeclaration() ||
@@ -319,13 +324,16 @@ class GpuLaunchLoweringPass
                             launch.getDynamicSharedMemorySize(), cluster_shape);
 
           // Add a new function argument for the kernel handle.
-          if (failed(func.insertArgument(
+          if (func.insertArgument(
                   0, ptr_ty, mlir::DictionaryAttr::get(func.getContext()),
-                  mlir::UnknownLoc::get(func.getContext())))) {
+                  mlir::UnknownLoc::get(func.getContext()))
+                  .failed()) {
             return mlir::WalkResult::interrupt();
           }
           mlir::Value kernel_handle = func.getArgument(0);
-          if (launchPreloadedKernel(func, launch, kernel_handle).failed()) {
+          if (launchPreloadedKernel(func, launch, kernel_handle,
+                                    programmatic_serialization)
+                  .failed()) {
             return mlir::WalkResult::interrupt();
           }
           launch.erase();

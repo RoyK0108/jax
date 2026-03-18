@@ -3766,6 +3766,31 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     self.assertIn("griddepcontrol.wait;", ptx_output)
     self.assertIn("griddepcontrol.launch_dependents;", ptx_output)
 
+  def test_griddepcontrol_multi_kernel(self):
+    # Tests that we can launch two kernels that communicate via griddepcontrol.
+    @jax.jit
+    def f(x):
+      def kernel_a(x_ref, out_ref):
+        out_ref[...] = x_ref[...] + 1.0
+        plgpu.griddepcontrol_launch_dependents()
+
+      def kernel_b(in_ref, out_ref):
+        plgpu.griddepcontrol_wait()
+        out_ref[...] = in_ref[...] * 2.0
+
+      intermediate = self.kernel(
+          kernel_a,
+          out_type=jax.ShapeDtypeStruct(x.shape, x.dtype),
+      )(x)
+      return self.kernel(
+          kernel_b,
+          out_type=jax.ShapeDtypeStruct(x.shape, x.dtype),
+      )(intermediate)
+
+    x = jnp.arange(128).astype(jnp.float32)
+    out = f(x)
+    np.testing.assert_allclose(out, (x + 1.0) * 2.0)
+
 
 class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
   def setUp(self):

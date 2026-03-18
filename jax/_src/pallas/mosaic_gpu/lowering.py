@@ -163,6 +163,7 @@ class Resources:
   scoped_gmem_semaphores: dict[CollectiveAxesType, int] = dataclasses.field(
       default_factory=dict
   )
+  programmatic_serialization: bool = False
 
   def __post_init__(self):
     object.__setattr__(
@@ -203,6 +204,8 @@ class Resources:
         + other.tmem_collective_scratch_cols,
         barrier_counts=self.barrier_counts + other.barrier_counts,
         scoped_gmem_semaphores=scoped_gmem_semaphores,
+        programmatic_serialization=self.programmatic_serialization
+        or other.programmatic_serialization,
     )
 
   def or_(self, other: Resources, axis_names: _AxisNames) -> Resources:
@@ -228,6 +231,8 @@ class Resources:
         ),
         barrier_counts=self.barrier_counts | other.barrier_counts,
         scoped_gmem_semaphores=scoped_gmem_semaphores,
+        programmatic_serialization=self.programmatic_serialization
+        or other.programmatic_serialization,
     )
 
 
@@ -1124,6 +1129,7 @@ def lower_jaxpr_to_module(
       prof_spec=prof_spec,
       jax_mesh=jax_mesh,
       base_loc=base_loc,
+      programmatic_serialization=rs.programmatic_serialization,
   )
 
   if lowering_semantics == mgpu.LoweringSemantics.Warpgroup:

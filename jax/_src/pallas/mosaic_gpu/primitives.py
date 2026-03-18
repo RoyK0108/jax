@@ -2940,6 +2940,12 @@ def _griddepcontrol_wait_lowering(ctx: lowering.LoweringRuleContext):
   return ()
 
 
+@lowering._register_resource_estimator(griddepcontrol_wait_p)
+def _griddepcontrol_wait_resource_estimator(ctx, *args):
+  del ctx, args  # Unused.
+  return lowering.Resources(programmatic_serialization=True)
+
+
 def griddepcontrol_wait():
   """Wait for dependent grids to finish."""
   griddepcontrol_wait_p.bind()
