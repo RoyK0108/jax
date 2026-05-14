@@ -18,6 +18,7 @@ See the Pallas documentation at
 https://docs.jax.dev/en/latest/pallas/index.html.
 """
 
+from jax._src import core as jax_core
 from jax._src.pallas.core import BlockDim as BlockDim
 from jax._src.pallas.core import Blocked as Blocked
 from jax._src.pallas.core import BlockSpec as BlockSpec
@@ -34,6 +35,7 @@ from jax._src.pallas.core import enable_poison_buffers as enable_poison_buffers
 from jax._src.pallas.core import GridSpec as GridSpec
 from jax._src.pallas.core import Indirect as Indirect
 from jax._src.pallas.core import lower_as_mlir as lower_as_mlir
+from jax._src.pallas.core import memory_ref as memory_ref
 from jax._src.pallas.core import MemoryRef as MemoryRef
 from jax._src.pallas.core import MemorySpace as MemorySpace
 from jax._src.pallas.core import no_block_spec as no_block_spec
@@ -78,7 +80,7 @@ from jax._src.state.primitives import broadcast_to as broadcast_to
 
 
 ANY = MemorySpace.ANY
-HOST = MemorySpace.HOST
+HOST = jax_core.MemorySpace.Host
 
 _deprecations = {
     # Added June 4, 2026

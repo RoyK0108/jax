@@ -221,6 +221,10 @@ class MemorySpace(enum.Enum):
   SEMAPHORE = "semaphore_mem"
   HBM = "hbm"
 
+  @property
+  def memory_kind(self) -> str:
+    return "device"
+
   def __getattr__(self, name):
     if name == "HOST":
       # Deprecated on June 4, 2026.
@@ -229,7 +233,7 @@ class MemorySpace(enum.Enum):
           "pltpu.MemorySpace.HOST is deprecated. Use pl.HOST instead.",
           stacklevel=2,
       )
-      return pallas_core.MemorySpace.HOST
+      return jax_core.MemorySpace.Host
     super().__getattr__(name)  # pyrefly: ignore[missing-attribute]
 
   def __str__(self) -> str:
@@ -243,6 +247,10 @@ class MemorySpace(enum.Enum):
 
   def __call__(self, shape: Sequence[int], dtype: jnp.dtype[Any]):
     # A convenience function for constructing MemoryRef types of ShapedArrays.
+    pallas_core._warn_deprecation(
+        "Calling TPU MemorySpace to construct MemoryRef is deprecated. "
+        "Use jax.experimental.pallas.memory_ref instead."
+    )
     return self.from_type(jax_core.ShapedArray(tuple(shape), dtype))
 
   def like(self, shape_dtype_like):
@@ -600,10 +608,16 @@ def memory_space_to_tpu_memory_space(
         MemorySpace
         | pallas_core.MemorySpace
         | pallas_core.CoreMemorySpace
+        | jax_core.MemorySpace
         | None
     ),
     core_type: CoreType,
-) -> MemorySpace | pallas_core.MemorySpace | pallas_core.CoreMemorySpace:
+) -> (
+    MemorySpace
+    | pallas_core.MemorySpace
+    | pallas_core.CoreMemorySpace
+    | jax_core.MemorySpace
+):
   match memory_space:
     case None:
       match core_type:
@@ -619,7 +633,7 @@ def memory_space_to_tpu_memory_space(
           return MemorySpace.SMEM
         case _:
           raise ValueError(f"Unsupported core type: {core_type}")
-    case pallas_core.MemorySpace.ANY | pallas_core.MemorySpace.HOST:
+    case pallas_core.MemorySpace.ANY | jax_core.MemorySpace.Host:
       return memory_space
     case (
         pallas_core.MemorySpace.ERROR

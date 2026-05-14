@@ -24,7 +24,9 @@ import dataclasses
 import enum
 import functools
 import itertools
+import sys
 import threading
+import warnings
 from typing import Any, ClassVar, Protocol, TypeAlias, Union, runtime_checkable
 
 from jax._src import api_util
@@ -256,7 +258,10 @@ class MemoryRef(MemoryRefBase):
     dtype = self.inner_aval.dtype
     if not isinstance(dtype, (jnp.dtype, dtypes.ExtendedDType)):
       dtype = jnp.dtype(dtype)
-    return self.inner_aval.update(dtype=dtype, memory_space=self.memory_space)
+    ms = self.memory_space
+    if ms is MemorySpace.ANY:
+      ms = jax_core.MemorySpace.Device
+    return self.inner_aval.update(dtype=dtype, memory_space=ms)
 
   def get_ref_aval(self) -> TransformedRef | state.AbstractRef:
     return state.AbstractRef(self.inner_aval, self.memory_space)
@@ -274,6 +279,32 @@ class MemoryRef(MemoryRefBase):
         other.shape, other.dtype, other.memory_space)
 
 
+def memory_ref(
+    shape: Sequence[int],
+    dtype: Any,
+    memory_space: Any,
+) -> MemoryRef:
+  """Constructs a MemoryRef with a ShapedArray of the given shape and dtype."""
+  return MemoryRef(
+      jax_core.ShapedArray(tuple(shape), dtype), memory_space=memory_space
+  )
+
+
+def _warn_deprecation(message: str):
+  if "jax._src.test_warning_util" in sys.modules:
+    return
+  warnings.warn(message, DeprecationWarning, stacklevel=3)
+
+
+def _jax_core_memory_space_call(self, shape, dtype):
+  _warn_deprecation(
+      "Calling JAX MemorySpace to construct MemoryRef is deprecated. "
+      "Use jax.experimental.pallas.memory_ref instead."
+  )
+  return MemoryRef(jax_core.ShapedArray(shape, dtype), memory_space=self)
+jax_core.MemorySpace.__call__ = _jax_core_memory_space_call  # pytype: ignore[bad-assignment]
+
+
 class MemorySpace(enum.Enum):
   """Logical, device-agnostic memory spaces.
 
@@ -285,13 +316,20 @@ class MemorySpace(enum.Enum):
   ERROR = "error"  # Memory space for checkify errors.
   INDEX = "index"  # Memory space for scalar prefetch arguments.
   KEY = "key"  # Memory space for PRNG keys.
-  HOST = "host"  # Host memory space.
+
+  @property
+  def memory_kind(self) -> str:
+    return "device"
 
   def from_type(self, type: jax_core.AbstractValue) -> MemoryRef:
     return MemoryRef(type, memory_space=self)
 
   def __call__(self, shape: tuple[int, ...], dtype: jnp.dtype):
     # A convenience function for constructing MemoryRef types of ShapedArrays.
+    _warn_deprecation(
+        "Calling MemorySpace to construct MemoryRef is deprecated. "
+        "Use jax.experimental.pallas.memory_ref instead."
+    )
     return self.from_type(jax_core.ShapedArray(shape, dtype))
 
   def __str__(self) -> str:
@@ -313,6 +351,10 @@ class CoreMemorySpace:
       )
 
   def __call__(self, shape: Sequence[int], dtype: jnp.dtype[Any]):
+    _warn_deprecation(
+        "Calling CoreMemorySpace to construct MemoryRef is deprecated. "
+        "Use jax.experimental.pallas.memory_ref instead."
+    )
     return MemoryRef(jax_core.ShapedArray(tuple(shape), dtype), self)
 
   def __str__(self) -> str:
@@ -324,6 +366,10 @@ class CoreMemorySpace:
   @property
   def name(self) -> Any:
     return f"{self.memory_space}@{self.mesh.core_type.name}"
+
+  @property
+  def memory_kind(self) -> str:
+    return jax_core.mem_space_to_kind(self.memory_space)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1452,9 +1498,11 @@ class CostEstimate:
 
 def get_memory_space_aval(aval: jax_core.AbstractValue) -> Any:
   """Queries the memory space of an array."""
-  if (isinstance(aval, jax_core.ShapedArray) and
-      not isinstance(aval.memory_space, jax_core.MemorySpace)):
-    return aval.memory_space
+  if isinstance(aval, jax_core.ShapedArray):
+    if aval.memory_space is jax_core.MemorySpace.Host:
+      return jax_core.MemorySpace.Host
+    if not isinstance(aval.memory_space, jax_core.MemorySpace):
+      return aval.memory_space
   if isinstance(aval, state.AbstractRef):
     if aval.memory_space is not None:
       return aval.memory_space
