@@ -4,7 +4,7 @@ module(name = "jax")
 # Bazel module dependencies
 ##############################################################
 
-bazel_dep(name = "abseil-cpp", version = "20260107.1", repo_name = "com_google_absl")
+bazel_dep(name = "abseil-cpp", version = "20260526.0", repo_name = "com_google_absl")
 bazel_dep(name = "bazel_features", version = "1.36.0")
 bazel_dep(name = "bazel_skylib", version = "1.8.2")
 bazel_dep(name = "flatbuffers", version = "25.2.10", repo_name = "com_github_google_flatbuffers")
@@ -115,8 +115,9 @@ single_version_override(
     patch_strip = 1,
     patches = [
         "//third_party/absl:btree.patch",
+        "//third_party/absl:compatibility_level.patch",
     ],
-    version = "20260107.1",
+    version = "20260526.0",
 )
 
 ### Toolchains
