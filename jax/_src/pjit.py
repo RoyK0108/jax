@@ -115,7 +115,7 @@ class PjitInfo(NamedTuple):
   device: xc.Device | None
   backend: str | None
   keep_unused: bool
-  inline: bool
+  inline: bool | api.Inline
   use_resource_env: bool  # False for jit, True for pjit
   compiler_options_kvs: tuple[tuple[str, Any], ...]
 
@@ -348,7 +348,7 @@ def _parse_jit_arguments(fun: Callable, *, in_shardings: Any,
                          donate_argnums: int | Sequence[int] | None,
                          donate_argnames: str | Iterable[str] | None,
                          keep_unused: bool, device: xc.Device | None,
-                         backend: str | None, inline: bool,
+                         backend: str | None, inline: bool | api.Inline,
                          compiler_options: dict[str, Any] | None,
                          use_resource_env: bool) -> PjitInfo:
   """Parses the arguments to jit/pjit.
@@ -406,6 +406,10 @@ def _parse_jit_arguments(fun: Callable, *, in_shardings: Any,
 
   compiler_options_kvs = (() if compiler_options is None else
                           tuple(compiler_options.items()))
+
+  if isinstance(inline, bool):
+    inline = api.Inline.JAX_EARLY if inline else api.Inline.XLA_LATE
+
   return PjitInfo(
         fun_sourceinfo=fun_sourceinfo,
         fun_signature=fun_signature,
@@ -436,7 +440,7 @@ def make_jit(fun: Callable,
              keep_unused: bool,
              device: xc.Device | None,
              backend: str | None,
-             inline: bool,
+             inline: bool | api.Inline,
              compiler_options: dict[str, Any] | None,
              use_resource_env: bool) -> Any:
   """jit() and pjit() are thin wrappers around this function."""
@@ -1288,7 +1292,7 @@ def pjit_staging_rule(trace, source_info, *args, **params):
         f' {source_info_util.summarize(source_info)}')
   # If we're inlining, no need to compute forwarding information; the inlined
   # computation will in effect forward things.
-  if (params["inline"] and
+  if (params['inline'] == api.Inline.JAX_EARLY and
       all(isinstance(i, UnspecifiedValue) for i in params["in_shardings"]) and
       all(isinstance(o, UnspecifiedValue) for o in params["out_shardings"]) and
       all(i is None for i in params["in_layouts"]) and
@@ -1427,6 +1431,9 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
       ctx.name_stack.extend(result.wrapped_name), ctx.traceback):
     call = func_dialect.CallOp(
         result.flat_output_types, result.symbol_ref, flat_args)
+    if inline is not None:
+      dict_attr = {"inlineable": ir.StringAttr.get(inline.value)}
+      call.operation.attributes['mhlo.frontend_attributes'] = ir.DictAttr.get(dict_attr)  # type: ignore
   mlir.wrap_compute_type_in_place(ctx, call.operation)
   out_nodes = result.output_treedef.unflatten(call.results)
   if effects:

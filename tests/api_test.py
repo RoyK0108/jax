@@ -4471,6 +4471,69 @@ class APITest(jtu.JaxTestCase):
     jaxpr = api.make_jaxpr(f)(3)
     self.assertNotIn('jit', str(jaxpr))
 
+  def test_jit_inline_multistate(self):
+    if not (
+        (jtu.test_device_matches(["tpu"]) and jtu.is_cloud_tpu_at_least(2026, 6, 19))
+        or (jtu.test_device_matches(["cpu", "gpu"]) and lib.jaxlib_extension_version >= 470)
+    ):
+      self.skipTest("Requires newer jaxlib or libtpu")
+    @api.jit(inline=api.Inline.AUTO)
+    def f(x):
+      return x * 2
+
+    jaxpr = api.make_jaxpr(f)(3)
+    self.assertIn("jit", str(jaxpr))
+
+    @api.jit(inline=api.Inline.JAX_EARLY)
+    def f(x):
+      return x * 2
+
+    jaxpr = api.make_jaxpr(f)(3)
+    self.assertNotIn("jit", str(jaxpr))
+
+    @api.jit(inline=api.Inline.XLA_EARLY)
+    def f(x):
+      return x * 2
+
+    jaxpr = api.make_jaxpr(f)(3)
+    self.assertIn("jit", str(jaxpr))
+
+    @api.jit(inline=api.Inline.XLA_LATE)
+    def f(x):
+      return x * 2
+
+    jaxpr = api.make_jaxpr(f)(3)
+    self.assertIn("jit", str(jaxpr))
+
+  def test_inline_optimized_hlo(self):
+    if not (
+        (jtu.test_device_matches(["tpu"]) and jtu.is_cloud_tpu_at_least(2026, 6, 19))
+        or (jtu.test_device_matches(["cpu", "gpu"]) and lib.jaxlib_extension_version >= 470)
+    ):
+      self.skipTest("Requires newer jaxlib or libtpu")
+    def sub(x):
+      return x * 2
+
+    get_hlo = lambda inline_mode: api.jit(
+        lambda x: api.jit(sub, inline=inline_mode)(x) + 1.0
+    ).lower(1.0).compile().as_text()
+
+    # For auto, we expect the single call to be inlined by XLA heuristics
+    self.assertNotIn("call(", get_hlo(api.Inline.AUTO))
+
+    # For jax_early, we expect it to be inlined by JAX.
+    self.assertNotIn("call(", get_hlo(api.Inline.JAX_EARLY))
+
+    # For xla_early and xla_late, we expect it not to be inlined by Jax.
+    # For xla_early, we expect XLA to inline it early.
+    self.assertNotIn("call(", get_hlo(api.Inline.XLA_EARLY))
+    # For xla_late, we expect XLA to preserve the call on CPU/GPU, but it
+    # will be inlined/flattened on TPU during TPU compilation.
+    if jtu.device_under_test() == "tpu":
+      self.assertNotIn("call(", get_hlo(api.Inline.XLA_LATE))
+    else:
+      self.assertIn("call(", get_hlo(api.Inline.XLA_LATE))
+
   # Repro for https://github.com/jax-ml/jax/issues/7229.
   def test_compute_with_large_transfer(self):
     def f(x, delta):
