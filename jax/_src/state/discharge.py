@@ -56,6 +56,23 @@ PyTreeDef = tree_util.PyTreeDef
 ## Discharging state
 
 
+def _discharged_aval(
+    aval: core.AbstractValue, discharge: bool
+) -> core.AbstractValue:
+  if not (isinstance(aval, AbstractRef) and discharge):
+    return aval
+  inner = aval.inner_aval
+  if isinstance(inner, core.ShapedArray) and aval.memory_space is not None:
+    # TODO(slebedev): Find a nicer way to handle ``pl.DEFAULT`` here.
+    mem_space = (
+        core.MemorySpace.Device
+        if str(aval.memory_space) == "default"
+        else aval.memory_space
+    )
+    return inner.update(memory_space=mem_space)
+  return inner
+
+
 def discharge_state(
     closed_jaxpr: core.ClosedJaxpr,
     *,
@@ -89,9 +106,9 @@ def _discharge_state(
     lower: bool,
  ) -> core.ClosedJaxpr:
   in_avals = [
-      v.aval.inner_aval
-      if isinstance(v.aval, AbstractRef) and d
-      else v.aval for v, d in zip(closed_jaxpr.invars, should_discharge)]
+      _discharged_aval(v.aval, d)
+      for v, d in zip(closed_jaxpr.invars, should_discharge)
+  ]
   eval_jaxpr = lu.wrap_init(
       partial(_eval_jaxpr_discharge_state,
               closed_jaxpr.jaxpr, should_discharge, closed_jaxpr.consts),

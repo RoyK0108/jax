@@ -477,6 +477,71 @@ class CoreMapTest(jtu.JaxTestCase):
         r"\[{\\22color\\22:" + str(color) + r"}\].*",
     )
 
+  @parameterized.product(explicit_memory_space=[True, False])
+  def test_kernel_in_scan(self, explicit_memory_space):
+    shape = (8, 128)
+    mesh = pltpu.create_tensorcore_mesh(axis_name="tc", num_cores=1)
+
+    @pl.kernel(out_type=pltpu.VMEM(shape, jnp.float32) @ mesh, mesh=mesh)
+    def init(o_ref):
+      o_ref[...] = jnp.zeros(shape, jnp.float32)
+
+    @pl.kernel(mesh=mesh)
+    def update(x_ref):
+      x_ref[...] += 1.0
+
+    @jax.jit
+    def run():
+      ref = jax.new_ref(
+          init(),
+          memory_space=pltpu.VMEM @ mesh if explicit_memory_space else None,
+      )
+
+      def body(c, _):
+        update(ref)
+        return c, None
+
+      jax.lax.scan(body, 0, length=4)
+      return jax.freeze(ref)
+
+    np.testing.assert_array_equal(run(), np.full(shape, 4.0))
+
+  def test_kernel_memory_space_output(self):
+    shape = (8, 128)
+    mesh = pltpu.create_tensorcore_mesh(axis_name="tc", num_cores=1)
+
+    @pl.kernel(out_type=pltpu.VMEM(shape, jnp.float32) @ mesh, mesh=mesh)
+    def init(o_ref):
+      o_ref[...] = jnp.zeros(shape, jnp.float32)
+
+    @pl.kernel(mesh=mesh)
+    def add1(ref):
+      ref[...] += 1
+
+    @jax.jit
+    def run():
+      x = init()
+      ref = jax.new_ref(
+          x,
+          memory_space=pltpu.VMEM @ mesh,  # if explicit_memory_space else None,
+      )
+      add1(ref)
+      x = jax.freeze(ref)
+      return x
+
+    try:
+      compiled = run.lower().compile()
+      optimized_hlo = compiled.runtime_executable().hlo_modules()[0].to_string()
+      print(f"DEBUG OPTIMIZED HLO:\n{optimized_hlo}")
+    except Exception as e:
+      print(f"DEBUG failed to get optimized HLO: {e}")
+
+    x = run()
+    print(f"DEBUG x type: {type(x)}")
+    x_aval = jax.typeof(x)
+    print(f"DEBUG x aval: {x_aval}")
+    print(f"DEBUG x memory_space: {getattr(x_aval, 'memory_space', None)}")
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
