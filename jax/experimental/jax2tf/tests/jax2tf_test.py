@@ -1168,7 +1168,8 @@ class Jax2TfTest(JaxToTfTestCase):
 
     x = np.ones((4, 6), dtype=np.float32)
     mesh = sharding.Mesh(jax.devices()[:1], ("a",))
-    # cummax has distinctive lowering for TPU, using a reduce-window op
+    # cummax has distinctive lowering for TPU, using a chlo.scan op
+    # (serialized as a stablehlo.composite with a portable decomposition).
     func = lambda x: lax.cummax(x, axis=0, reverse=False)
     # For shard_map we cannot use cummax :-( because it does not have a
     # replication rule. But we use lax.all_gather which on TPU is lowered with
@@ -1222,7 +1223,7 @@ class Jax2TfTest(JaxToTfTestCase):
     if transform1 == "shard_map":
       self.assertIn("stablehlo.all_gather", str(exported.mlir_module()))
     else:
-      self.assertIn("stablehlo.reduce_window", str(exported.mlir_module()))
+      self.assertIn("chlo.scan", str(exported.mlir_module()))
 
   def test_cross_platform_error(self):
     f_tf = jax2tf.convert(jnp.sin,
