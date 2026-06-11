@@ -775,3 +775,10 @@ def pprint_bytes(num_bytes: int | float) -> str:
   return f"{scaled_value:.2f}{prefixes[exponent]}B"
 
 install_failure_signal_handler = jaxlib_utils.install_failure_signal_handler
+
+class Singleton():
+  def __init__(self, name): self.name = name
+  def __repr__(self): return self.name
+  def __hash__(self): return 0
+  def __eq__(self, other): return self is other
+
