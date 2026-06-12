@@ -21,6 +21,13 @@ from jax._src import tree_util
 
 hole = util.Singleton("_")
 
+@staticmethod
+def flatten_static_argnums_argnames(
+    args, kwargs, static_argnums, static_argnames):
+  assert not static_argnums
+  assert not static_argnames
+  return pack(*(flatten(arg) for arg in args))
+
 def flat_list(xs): return FTList(xs)
 def flatten(pytree):
   xs, treedef = tree.flatten(pytree)
@@ -35,6 +42,8 @@ class FlatTree:
                     | List [a]
                     | Filtered [a] (FlatTree (Either Hole Aux))
                     | Pytree [a] PyTreeDef
+                    | ArgsAndKwargs [Either Aux (FlatTree a)]
+                                    {Either Aux (FlatTree a)]
   """
   def unpack(self): raise TypeError(f"Not a FlatTree tuple: {self}")
   def from_list(self): raise TypeError(f"Not a FlatTree list: {self}")
@@ -57,6 +66,15 @@ class FlatTree:
     return FTFiltered(kept, put_aside)
 
 class FTTuple(FlatTree):
+  @property
+  def tree_without_statics(self):
+    # DO NOT SUBMIT
+    ts = tuple(t.treedef for t in self.trees)
+    return tree_util.treedef_tuple(ts)
+  def unflatten(self):
+    # DO NOT SUBMIT
+    return tuple(t.unflatten() for t in self.trees)
+
   def __init__(self, trees):
     trees = trees if isinstance(trees, tuple) else tuple(trees)
     for t in trees: assert isinstance(t, FlatTree)
@@ -122,6 +140,10 @@ class FTPyTree(FlatTree):
     xs = xs if isinstance(xs, tuple) else tuple(xs)
     self.xs = xs
     self.treedef = treedef
+
+  def unflatten(self):
+    assert False
+    return tree_util.tree_unflatten(self.treedef, self.xs)
   def __iter__(self): return iter(self.xs)
   def __len__(self): return len(self.xs)
   def _iter_update(self, xs_iter):
@@ -131,19 +153,3 @@ class FTPyTree(FlatTree):
     return (isinstance(other, FTPyTree) and
             self.xs == other.xs and self.treedef == other.treedef)
   def __hash__(self): return hash((self.xs, self.treedef))
-
-t0 = flat_list([1, 2, 3, 4, 5, 6])
-print(t0)
-t1 = flatten(dict(x=100, y=101))
-print(t1)
-t2 = flat_list([4, 5, 6, 7, 8, 9, 10])
-print(t2)
-t3 = pack(t0, t1, t2)
-print(t3)
-t4 = t3.with_aux("boo")
-print(t4)
-t5 = t4.filter(t4.map(lambda x: x%2==0))
-print(t5)
-t6 = t5.unfilter()
-print(t6)
-

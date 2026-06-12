@@ -40,11 +40,12 @@ from contextlib import contextmanager
 
 from jax._src import api_util
 from jax._src import linear_util as lu
+from jax._src import flattree as ft
 from jax._src.tree_util import (
     tree_map, tree_flatten, tree_unflatten, tree_structure, tree_transpose,
     tree_leaves, Partial, PyTreeDef, keystr, generate_key_paths,
     tree_flatten_with_path, equality_errors_pytreedef, register_pytree_node,
-    register_dataclass, FlatTree)
+    register_dataclass)
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch

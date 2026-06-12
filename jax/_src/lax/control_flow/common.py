@@ -24,8 +24,8 @@ from jax._src import ad_util
 from jax._src import config
 from jax._src import core
 from jax._src.interpreters import partial_eval as pe
+from jax._src import flattree as ft
 from jax._src.tree_util import (
-    FlatTree,
     equality_errors_pytreedef,
     keystr,
     tree_map,

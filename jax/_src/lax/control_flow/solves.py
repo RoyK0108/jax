@@ -28,7 +28,8 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.traceback_util import api_boundary
-from jax._src.tree_util import tree_leaves, FlatTree
+from jax._src import flattree as ft
+from jax._src.tree_util import tree_leaves
 from jax._src.util import split_list, safe_map
 import numpy as np
 

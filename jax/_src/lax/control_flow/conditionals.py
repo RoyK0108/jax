@@ -22,9 +22,10 @@ import itertools
 import operator
 from typing import Any, TypeVar
 
+from jax._src import flattree as ft
 from jax._src.tree_util import (
     tree_flatten, tree_unflatten, tree_flatten_with_path, keystr,
-    equality_errors_pytreedef, FlatTree)
+    equality_errors_pytreedef)
 from jax._src import ad_util
 from jax._src import api_util
 from jax._src import config

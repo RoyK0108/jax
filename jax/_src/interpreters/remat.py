@@ -21,8 +21,8 @@ from jax._src import core
 from jax._src import api_util
 from jax._src.util import safe_map, safe_zip, unzip2, weakref_lru_cache
 from jax._src.interpreters import partial_eval as pe
-from jax._src.tree_util import (
-    FlatTree, Partial, tree_unflatten, tree_leaves_checked)
+from jax._src import flattree as ft
+from jax._src.tree_util import ( Partial, tree_unflatten, tree_leaves_checked)
 from jax._src import source_info_util
 from jax._src.core import typeof
 

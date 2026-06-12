@@ -53,7 +53,8 @@ from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.sharding_impls import UnspecifiedValue
 from jax._src.mesh import AbstractMesh
-from jax._src.tree_util import FlatTree, tree_unflatten
+from jax._src import flattree as ft
+from jax._src.tree_util import tree_unflatten
 from jax._src.typing import ArrayLike
 
 source_info_util.register_exclusion(__file__)

@@ -74,7 +74,8 @@ from jax._src.state.types import RefEffect
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import (
     tree_flatten, tree_unflatten, tree_structure, treedef_children,
-    PyTreeDef, none_leaf_registry as none_lr, tree_map, FlatTree)
+    PyTreeDef, none_leaf_registry as none_lr, tree_map)
+from jax._src import flattree as ft
 from jax._src.typing import Array, ArrayLike
 from jax._src.util import (
     HashableFunction, safe_map, safe_zip, wraps, distributed_debug_log,
@@ -466,7 +467,7 @@ class PjitParams(NamedTuple):
 def _trace_for_jit(
     fun: Callable, ji: PjitInfo, ctx_mesh: mesh_lib.Mesh,
     dbg: core.DebugInfo, avals, args, kwargs) -> PjitParams:
-  args_ft = FlatTree.flatten_static_argnums_argnames(
+  args_ft = ft.flatten_static_argnums_argnames(
       args, kwargs, ji.static_argnums, ji.static_argnames)
   avals_ft = args_ft.update(avals)
 
@@ -509,9 +510,8 @@ def _trace_for_jit(
   assert None not in in_shardings_leaves
   assert None not in out_shardings_leaves
 
-  in_type = avals_ft.map2(
-    lambda a, x: core.AvalQDD(a, cur_qdd(x)) if a.has_qdd else a,
-    args_ft)
+  in_type = avals_ft.map2(args_ft,
+      lambda a, x: core.AvalQDD(a, cur_qdd(x)) if a.has_qdd else a)
   assert avals_ft is not None
 
   in_shardings_flat, in_layouts_flat = _process_in_axis_resources(
@@ -519,7 +519,7 @@ def _trace_for_jit(
       ji.in_layouts_treedef, ji.in_layouts_leaves,
       avals_ft, dbg, device_or_backend_set, has_kwargs)
 
-  qdd_token = _qdd_cache_index(fun, in_type.vals)  # represents qdd state context
+  qdd_token = _qdd_cache_index(fun, tuple(in_type))  # represents qdd state context
 
   elapsed_time_ctx = (
       dispatch.log_elapsed_time(

@@ -73,7 +73,7 @@ from jax._src.sharding_impls import canonicalize_sharding
 from jax._src.state import AbstractRef, discharge as state_discharge
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import equality_errors
-from jax._src.tree_util import ( FlatTree,
+from jax._src.tree_util import (
     keystr, tree_flatten, tree_map, tree_unflatten,
     treedef_is_leaf)
 from jax._src.typing import Array
