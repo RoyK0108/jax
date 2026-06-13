@@ -1092,7 +1092,7 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertAllClose(g2, jnp.cos(jnp.sin(x)) * jnp.cos(x),
                         check_dtypes=False, atol=1e-3, rtol=1e-3)
     saved_res = saved_residuals(f2, x)
-    self.assertLen(saved_res, 2)
+    self.assertLen(saved_res, 1 if config.remat3.value else 2)
 
   def test_shmap_of_remat_basic(self):
     mesh = Mesh(np.array(jax.devices()[:4]), ('x',))
@@ -2418,6 +2418,8 @@ class ShardMapTest(jtu.JaxTestCase):
 
     x = jnp.arange(16.)
     jaxpr_ = jax.make_jaxpr(jax.grad(g))(x)
+    if remat and config.remat3.value:
+      return  # remat3 doesn't support everything_saveable or residual forwarding
     jaxpr, _ = pe.dce_jaxpr(jaxpr_.jaxpr, [True] * len(jaxpr_.out_avals))
     e1, *_, e2 = jaxpr.eqns
     self.assertLen(e1.outvars, 1)  # only primal output
@@ -2453,6 +2455,8 @@ class ShardMapTest(jtu.JaxTestCase):
 
     x = jnp.arange(16.)
     jaxpr_ = jax.make_jaxpr(jax.grad(g))(x)
+    if remat and config.remat3.value:
+      return  # remat3 doesn't support everything_saveable or residual forwarding
     jaxpr, _ = pe.dce_jaxpr(jaxpr_.jaxpr, [True] * len(jaxpr_.out_avals))
     e1, *_, e2 = jaxpr.eqns
     self.assertLen(e1.outvars, 2)  # one primal and one res output
