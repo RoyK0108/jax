@@ -2419,7 +2419,9 @@ class ShardMapTest(jtu.JaxTestCase):
     x = jnp.arange(16.)
     jaxpr_ = jax.make_jaxpr(jax.grad(g))(x)
     if remat and config.remat3.value:
-      return  # remat3 doesn't support everything_saveable or residual forwarding
+      # remat3 doesn't support everything_saveable, which these assertions need
+      # (they check out_fwd forwarding of a saved primal output)
+      return
     jaxpr, _ = pe.dce_jaxpr(jaxpr_.jaxpr, [True] * len(jaxpr_.out_avals))
     e1, *_, e2 = jaxpr.eqns
     self.assertLen(e1.outvars, 1)  # only primal output
@@ -2456,7 +2458,9 @@ class ShardMapTest(jtu.JaxTestCase):
     x = jnp.arange(16.)
     jaxpr_ = jax.make_jaxpr(jax.grad(g))(x)
     if remat and config.remat3.value:
-      return  # remat3 doesn't support everything_saveable or residual forwarding
+      # remat3 doesn't support everything_saveable, which these assertions need
+      # (they check out_fwd forwarding of a saved primal output)
+      return
     jaxpr, _ = pe.dce_jaxpr(jaxpr_.jaxpr, [True] * len(jaxpr_.out_avals))
     e1, *_, e2 = jaxpr.eqns
     self.assertLen(e1.outvars, 2)  # one primal and one res output
