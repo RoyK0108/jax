@@ -66,14 +66,6 @@ class FlatTree:
     return FTFiltered(kept, put_aside)
 
 class FTTuple(FlatTree):
-  @property
-  def tree_without_statics(self):
-    # DO NOT SUBMIT
-    ts = tuple(t.treedef for t in self.trees)
-    return tree_util.treedef_tuple(ts)
-  def unflatten(self):
-    # DO NOT SUBMIT
-    return tuple(t.unflatten() for t in self.trees)
 
   def __init__(self, trees):
     trees = trees if isinstance(trees, tuple) else tuple(trees)
@@ -142,7 +134,6 @@ class FTPyTree(FlatTree):
     self.treedef = treedef
 
   def unflatten(self):
-    assert False
     return tree_util.tree_unflatten(self.treedef, self.xs)
   def __iter__(self): return iter(self.xs)
   def __len__(self): return len(self.xs)
@@ -153,3 +144,13 @@ class FTPyTree(FlatTree):
     return (isinstance(other, FTPyTree) and
             self.xs == other.xs and self.treedef == other.treedef)
   def __hash__(self): return hash((self.xs, self.treedef))
+
+  @property
+  def paths(self) -> FlatTree:
+    # TODO(dougalm): find a way to do this without roundtripping
+    try:
+      paths, _ = unzip2(self.registry.flatten_with_path(self.unflatten())[0])
+      assert len(paths) == len(self.xs)
+      return self.update(paths)
+    except:
+      return self.update([()] * len(self.xs))  # not our fault

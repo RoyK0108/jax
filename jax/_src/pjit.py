@@ -464,12 +464,11 @@ class PjitParams(NamedTuple):
   arg_names: tuple[str, ...]  # Not including the const_args
 
 
+# TODO(dougalm): inline this to save a jit stack frame
 def _trace_for_jit(
     fun: Callable, ji: PjitInfo, ctx_mesh: mesh_lib.Mesh,
     dbg: core.DebugInfo, avals, args, kwargs) -> PjitParams:
-  args_ft = ft.flatten_static_argnums_argnames(
-      args, kwargs, ji.static_argnums, ji.static_argnames)
-  avals_ft = args_ft.update(avals)
+  targs = pe.new_tracing_args(args, kwargs, avals, ji.static_argnums, ji.static_argnames)
 
   has_kwargs = bool(kwargs)
   if has_kwargs and ji.user_specified_in_shardings:
@@ -483,9 +482,9 @@ def _trace_for_jit(
 
   if (ji.donate_argnums or ji.donate_argnames) and not config.debug_nans.value:
     donated_invars = donation_vector(ji.donate_argnums, ji.donate_argnames,
-                                     avals_ft.tree)
+                                     targs.tree)
   else:
-    donated_invars = (False,) * len(avals_ft)
+    donated_invars = (False,) * len(targs.avals)
 
   # If backend or device is set as an arg on jit, then resolve them to
   # in_shardings and out_shardings as if user passed in in_shardings
@@ -510,16 +509,12 @@ def _trace_for_jit(
   assert None not in in_shardings_leaves
   assert None not in out_shardings_leaves
 
-  in_type = avals_ft.map2(args_ft,
-      lambda a, x: core.AvalQDD(a, cur_qdd(x)) if a.has_qdd else a)
-  assert avals_ft is not None
-
   in_shardings_flat, in_layouts_flat = _process_in_axis_resources(
       in_shardings_treedef, in_shardings_leaves,
       ji.in_layouts_treedef, ji.in_layouts_leaves,
-      avals_ft, dbg, device_or_backend_set, has_kwargs)
+      targs, dbg, device_or_backend_set)
 
-  qdd_token = _qdd_cache_index(fun, tuple(in_type))  # represents qdd state context
+  qdd_token = None # _qdd_cache_index(fun, tuple(in_type))
 
   elapsed_time_ctx = (
       dispatch.log_elapsed_time(
@@ -530,9 +525,9 @@ def _trace_for_jit(
     if ji.use_resource_env:  # pjit
       with (_internal_use_concrete_mesh(ctx_mesh),
             mesh_lib.use_abstract_mesh(ctx_mesh.abstract_mesh)):
-        jaxpr, out_avals = pe.trace_to_jaxpr(fun, in_type, dbg, qdd_token)
+        jaxpr, out_avals = pe.trace_to_jaxpr(fun, targs, dbg, qdd_token)
     else:
-      jaxpr, out_avals = pe.trace_to_jaxpr(fun, in_type, dbg, qdd_token)
+      jaxpr, out_avals = pe.trace_to_jaxpr_user(fun, targs, dbg, qdd_token)
 
   if config.debug_key_reuse.value:
     # Import here to avoid circular imports
@@ -550,24 +545,24 @@ def _trace_for_jit(
   else:
     consts = []
 
-  if config.mutable_array_checks.value:
-    _check_no_aliased_closed_over_refs(dbg, (*jaxpr.consts, *consts), args_ft.vals)
-  _qdd_cache_update(fun, in_type.vals, qdd_token, consts,
-                    jaxpr.in_aval_qdds[:len(consts)])
+  # if config.mutable_array_checks.value:
+  #   _check_no_aliased_closed_over_refs(dbg, (*jaxpr.consts, *consts), args_ft.vals)
+  # _qdd_cache_update(fun, in_type.vals, qdd_token, consts,
+  #                   jaxpr.in_aval_qdds[:len(consts)])
 
   out_shardings_flat, out_layouts_flat = _check_and_canonicalize_out_shardings(
       out_shardings_treedef, out_shardings_leaves, ji.out_layouts_treedef,
-      ji.out_layouts_leaves, out_avals.tree,
+      ji.out_layouts_leaves, out_avals.treedef,
       tuple(out_avals), jaxpr.jaxpr._debug_info, device_or_backend_set)
 
-  assert len(args_ft.vals) == len(in_shardings_flat) == len(in_layouts_flat)
+  assert len(targs) == len(in_shardings_flat) == len(in_layouts_flat)
 
   num_extra_args = len(consts)
   in_shardings_flat = (UNSPECIFIED,) * num_extra_args + in_shardings_flat
   in_layouts_flat = (None,) * num_extra_args + in_layouts_flat
   donated_invars = (False,) * num_extra_args + donated_invars
   assert (len(in_shardings_flat) == len(in_layouts_flat) ==
-          len(donated_invars) == len(consts) + len(avals_ft))
+          len(donated_invars) == len(consts) + len(targs))
 
   params = dict(
       jaxpr=jaxpr,
@@ -582,8 +577,8 @@ def _trace_for_jit(
       inline=ji.inline,
       compiler_options_kvs=ji.compiler_options_kvs,
   )
-  return PjitParams(consts, params, avals_ft.vals, avals_ft.tree_without_statics,
-                    out_avals.tree, dbg.safe_arg_names(len(avals_ft)))
+  return PjitParams(consts, params, targs.avals, targs,
+                    out_avals.treedef, dbg.safe_arg_names(len(targs)))
 
 
 @dataclass(slots=True)
@@ -746,12 +741,8 @@ def _create_sharding_with_device_backend(device, backend):
 def _process_in_axis_resources(in_shardings_treedef, in_shardings_leaves,
                                in_layouts_treedef, in_layouts_leaves,
                                in_avals, dbg: core.DebugInfo,
-                               device_or_backend_set, kws):
-  if kws:
-    in_tree = in_avals.tree_without_statics
-  else:
-    in_tree, _ = treedef_children(in_avals.tree_without_statics)
-
+                               device_or_backend_set):
+  in_tree = in_avals.tree_without_statics
   orig_in_shardings = tree_unflatten(in_shardings_treedef, in_shardings_leaves)
   # Only do this if original in_shardings are unspecified.
   if isinstance(orig_in_shardings, UnspecifiedValue):

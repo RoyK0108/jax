@@ -782,3 +782,24 @@ class Singleton():
   def __hash__(self): return 0
   def __eq__(self, other): return self is other
 
+class Either():
+  def __init__(self, is_right, val):
+    self.val = val
+    self.is_right = is_right
+
+  def from_left(self):
+    assert not self.is_right
+    return self.val
+
+  def from_right(self):
+    assert self.is_right
+    return self.val
+
+  @property
+  def is_left(self): return not self.is_right
+
+  @staticmethod
+  def left(x): return Either(False, x)
+
+  @staticmethod
+  def right(x): return Either(True, x)

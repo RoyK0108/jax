@@ -18,7 +18,7 @@ from collections import namedtuple
 from collections.abc import Callable, Sequence
 import contextlib
 from dataclasses import dataclass
-from functools import partial
+from functools import cached_property, partial
 import itertools as it
 import logging
 import operator as op
@@ -44,11 +44,11 @@ from jax._src.lib import _jax
 from jax._src.source_info_util import SourceInfo
 from jax._src.state.types import AbstractRef, ReadEffect
 from jax._src import flattree as ft
-from jax._src.tree_util import PyTreeDef
+from jax._src.tree_util import PyTreeDef, treedef_tuple
 from jax._src.util import (unzip2, safe_zip, safe_map, toposort, split_list,
                            merge_lists, partition_list, OrderedSet,
                            weakref_lru_cache, multi_weakref_lru_cache,
-                           subs_list, foreach, test_event)
+                           subs_list, foreach, test_event, Either)
 from jax._src.lib import jaxlib_extension_version
 
 
@@ -2286,15 +2286,115 @@ def _lower_debug_info(hi_jaxpr, out_mut):
     debug_info = debug_info._replace(result_paths=(*qdd_paths, *lo_result_paths))
   return debug_info
 
+@dataclass(frozen=True)
+class TracingArgs:
+  # static args as vals (left); dynamic args as avals (right)
+  args : tuple[Either[Any, FlatTree[AbstractValue]], ...]
+  kwarg_keys : tuple[Any, ...]
+  kwarg_vals : tuple[Either[Any, FlatTree[AbstractValue]], ...]
+
+  def to_tracers(self, new_arg):
+    def make_arg(x):
+      if x.is_left:
+        return x.from_left()
+      else:
+        return x.from_right().map(new_arg).unflatten()
+    return (tuple(map(make_arg, self.args)),
+            {k : make_arg(v) for k, v in zip(self.kwarg_keys, self.kwarg_vals)})
+
+  @cached_property
+  def avals(self):
+    return [aval for arg in it.chain(self.args, self.kwarg_vals)
+            if arg.is_right for aval in arg.from_right()]
+
+  def __len__(self): return len(self.avals)
+  def __iter__(self): return iter(self.avals)
+
+  # TODO: revise this away
+  @cached_property
+  def tree_without_statics(self):
+    return treedef_tuple(ft.from_right().treedef for ft in self.args if ft.is_right)
+
+# There's an awkward redundancy between args/kwargs and avals here.
+# It's because jax_jit.parse_argnuments is baked into C++.
+def new_tracing_args(
+    args, kwargs={}, avals=None, static_argnums=(), static_argnames=()):
+  avals_iter = iter(list(avals)) if avals is not None else None
+  def handle_arg(statics, i, arg):
+    if i in statics:
+      return Either.left(arg)
+    else:
+      arg_ft = ft.flatten(arg)
+      if avals_iter is None:
+        avals_ft = arg_ft.map(typeof)
+      else:
+        avals_ft = arg_ft.update(list(it.islice(avals_iter, len(arg_ft))))
+      return Either.right(avals_ft)
+
+  args_ = tuple(handle_arg(static_argnums, i, arg) for i, arg in enumerate(args))
+  kwargs_ = tuple((k, handle_arg(static_argnames, k, arg))
+                  for k, arg in sorted(kwargs.items()))
+  return TracingArgs(args_, *unzip2(kwargs_))
+
 @weakref_lru_cache(maxsize=None, explain=explain)
-def trace_to_jaxpr(
+def trace_to_jaxpr_user(
+    fun: Callable,
+    arguments: TracingArguments,
+    debug_info: core.DebugInfo,
+    *context_for_cache_key,
+    requires_low=False):
+  if config.no_tracing.value:
+    raise RuntimeError(f"re-tracing function {fun} for "
+                       "`jit`, but 'no_tracing' is set")
+  del context_for_cache_key  # read implicitly, e.g. qdd state
+  test_event("trace_to_jaxpr_user")
+  parent_trace = core.trace_ctx.trace
+  trace = DynamicJaxprTrace(debug_info, parent_trace=parent_trace,
+                            lower=requires_low)
+  # Name stack and the traceback scope are reset because the metadata on jaxpr
+  # equations should be rooted at the enclosing jaxpr and not contain any
+  # context from the callsite. Otherwise metadata from one caller would bleed
+  # into metadata from a different caller if we, e.g., inline.
+  with (core.ensure_no_leaks(trace), source_info_util.reset_name_stack(),
+        TracebackScope()):
+    source_info = source_info_util.current()
+    if requires_low:
+      def new_arg(aval):
+        lo_tracers = [trace.new_arg(lo_aval, source_info=source_info) for lo_aval in aval.lo_ty()]  # noqa: F821
+        return aval.raise_val(*lo_tracers)
+    else:
+      new_arg = partial(trace.new_arg, source_info=source_info)
+
+    with core.set_current_trace(trace):
+      args, kwargs = arguments.to_tracers(new_arg)
+      ans_pytree = fun(*args, **kwargs)
+      debug_info = debug_info.set_result_paths(ans_pytree)
+      ans = ft.flatten(ans_pytree)
+      del ans_pytree, args, kwargs
+
+    _check_returned_jaxtypes(debug_info, list(ans))
+    ans = ans.map(dtypes.canonicalize_value)
+    out_avals = ans.map(typeof)
+    if requires_low:
+      flat_out_tracers = [trace.to_jaxpr_tracer(x, source_info=source_info)
+                          for aval, hi_val in zip(out_avals, ans)
+                          for x in aval.lower_val(hi_val)]
+    else:
+      flat_out_tracers = [trace.to_jaxpr_tracer(x, source_info=source_info)
+                          for x in ans]
+
+    _check_no_returned_refs(debug_info, list(flat_out_tracers))
+    jaxpr, consts = trace.frame.to_jaxpr(trace, list(flat_out_tracers), debug_info,
+                                         source_info)
+    del trace, fun, flat_out_tracers, ans
+  config.enable_checks.value and core.check_jaxpr(jaxpr)
+  return ClosedJaxpr(jaxpr, consts), out_avals
+
+def trace_to_jaxpr_internal(
     fun: Callable,
     in_avals: FlatTree,  # (args, kwargs) pair
     debug_info: core.DebugInfo,
     *context_for_cache_key,
-    # TODO: let's just make a `trace_to_jaxpr_ft` function for this
-    fun_takes_flat_tree_arg=False,
-    fun_returns_flat_tree=False,
     requires_low=False,
 ) -> tuple[ClosedJaxpr, FlatTree]:
   if config.no_tracing.value:
