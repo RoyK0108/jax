@@ -49,7 +49,7 @@ from jax._src.core import typeof, cur_qdd
 from jax._src.api_util import (
     flatten_axes, donation_vector, check_callable, resolve_argnums, debug_info,
     check_no_aliased_ref_args, _check_no_aliased_closed_over_refs,
-    flatten_axis_resources)
+    flatten_axis_resources, args_and_kwargs)
 from jax._src.interpreters import partial_eval as pe
 from jax._src.partition_spec import PartitionSpec
 from jax._src.interpreters import ad
@@ -468,8 +468,8 @@ class PjitParams(NamedTuple):
 def _trace_for_jit(
     fun: Callable, ji: PjitInfo, ctx_mesh: mesh_lib.Mesh,
     dbg: core.DebugInfo, avals, args, kwargs) -> PjitParams:
-  targs = pe.new_tracing_args(args, kwargs, avals, ji.static_argnums, ji.static_argnames)
-
+  ak = args_and_kwargs(
+      args, kwargs, ji.static_argnums, ji.static_argnames).update(avals)
   has_kwargs = bool(kwargs)
   if has_kwargs and ji.user_specified_in_shardings:
     raise ValueError(
@@ -482,9 +482,9 @@ def _trace_for_jit(
 
   if (ji.donate_argnums or ji.donate_argnames) and not config.debug_nans.value:
     donated_invars = donation_vector(ji.donate_argnums, ji.donate_argnames,
-                                     targs.tree)
+                                     ak.tree)
   else:
-    donated_invars = (False,) * len(targs.avals)
+    donated_invars = (False,) * len(ak)
 
   # If backend or device is set as an arg on jit, then resolve them to
   # in_shardings and out_shardings as if user passed in in_shardings
@@ -512,7 +512,7 @@ def _trace_for_jit(
   in_shardings_flat, in_layouts_flat = _process_in_axis_resources(
       in_shardings_treedef, in_shardings_leaves,
       ji.in_layouts_treedef, ji.in_layouts_leaves,
-      targs, dbg, device_or_backend_set)
+      ak, dbg, device_or_backend_set)
 
   qdd_token = None # _qdd_cache_index(fun, tuple(in_type))
 
@@ -525,9 +525,9 @@ def _trace_for_jit(
     if ji.use_resource_env:  # pjit
       with (_internal_use_concrete_mesh(ctx_mesh),
             mesh_lib.use_abstract_mesh(ctx_mesh.abstract_mesh)):
-        jaxpr, out_avals = pe.trace_to_jaxpr(fun, targs, dbg, qdd_token)
+        jaxpr, out_avals = pe.trace_to_jaxpr(fun, ak, dbg, qdd_token)
     else:
-      jaxpr, out_avals = pe.trace_to_jaxpr_user(fun, targs, dbg, qdd_token)
+      jaxpr, out_avals = pe.trace_to_jaxpr_user(fun, ak, dbg, qdd_token)
 
   if config.debug_key_reuse.value:
     # Import here to avoid circular imports
@@ -555,14 +555,14 @@ def _trace_for_jit(
       ji.out_layouts_leaves, out_avals.treedef,
       tuple(out_avals), jaxpr.jaxpr._debug_info, device_or_backend_set)
 
-  assert len(targs) == len(in_shardings_flat) == len(in_layouts_flat)
+  assert len(ak) == len(in_shardings_flat) == len(in_layouts_flat)
 
   num_extra_args = len(consts)
   in_shardings_flat = (UNSPECIFIED,) * num_extra_args + in_shardings_flat
   in_layouts_flat = (None,) * num_extra_args + in_layouts_flat
   donated_invars = (False,) * num_extra_args + donated_invars
   assert (len(in_shardings_flat) == len(in_layouts_flat) ==
-          len(donated_invars) == len(consts) + len(targs))
+          len(donated_invars) == len(consts) + len(ak))
 
   params = dict(
       jaxpr=jaxpr,
@@ -577,8 +577,8 @@ def _trace_for_jit(
       inline=ji.inline,
       compiler_options_kvs=ji.compiler_options_kvs,
   )
-  return PjitParams(consts, params, targs.avals, targs,
-                    out_avals.treedef, dbg.safe_arg_names(len(targs)))
+  return PjitParams(consts, params, list(ak), ak,
+                    out_avals.treedef, dbg.safe_arg_names(len(ak)))
 
 
 @dataclass(slots=True)
@@ -882,7 +882,7 @@ def _to_lojax(*hi_args, jaxpr, **params):
                  for aval, x in zip(jaxpr.in_aval_qdds, hi_args)]
   lo_args = [x for xs in lo_args_lol for x in xs]
 
-  in_avals = FlatTree.flatten(([[typeof(x) for x in xs] for xs in lo_args_lol], {}))
+  in_avals = ft.flatten(([[typeof(x) for x in xs] for xs in lo_args_lol], {}))
   lo_jaxpr, out_avals = pe.lower_jaxpr(jaxpr, in_avals)
   params = _lojax_expand_params(in_avals, out_avals, **params)
 

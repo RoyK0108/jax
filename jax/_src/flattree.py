@@ -13,6 +13,8 @@
 # limitations under the License.
 from __future__ import annotations
 
+from dataclasses import dataclass
+from functools import cached_property
 import itertools as it
 
 from jax._src import tree
@@ -21,18 +23,12 @@ from jax._src import tree_util
 
 hole = util.Singleton("_")
 
-@staticmethod
-def flatten_static_argnums_argnames(
-    args, kwargs, static_argnums, static_argnames):
-  assert not static_argnums
-  assert not static_argnames
-  return pack(*(flatten(arg) for arg in args))
-
 def flat_list(xs): return FTList(xs)
 def flatten(pytree):
   xs, treedef = tree.flatten(pytree)
   return FTPyTree(xs, treedef)
 def pack(*trees): return FTTuple(trees)
+def pack2(*trees): return FTTuple(FTTuple(t) for t in trees)
 
 class FlatTree:
   """FlatTree is a Python OOP version of this functor:
@@ -52,6 +48,7 @@ class FlatTree:
   def map(self, f): return self.update(map(f, self))
   def map2(self, ys, f): return self.update(map(f, self, ys))
   def map3(self, ys, zs, f): return self.update(map(f, self, ys, zs))
+  def unzip2(self): return self.map(lambda x: x[0]), self.map(lambda x: x[1])
   def with_aux(self, aux): return FTWithAux(self, aux)
   def update(self, xs):
     xs = list(xs)
@@ -145,6 +142,9 @@ class FTPyTree(FlatTree):
             self.xs == other.xs and self.treedef == other.treedef)
   def __hash__(self): return hash((self.xs, self.treedef))
 
+  @cached_property
+  def tree(self): return self.treedef
+
   @property
   def paths(self) -> FlatTree:
     # TODO(dougalm): find a way to do this without roundtripping
@@ -154,3 +154,4 @@ class FTPyTree(FlatTree):
       return self.update(paths)
     except:
       return self.update([()] * len(self.xs))  # not our fault
+

@@ -15,9 +15,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Sequence
+from dataclasses import dataclass
+from functools import cached_property
 import inspect
 import operator
 from functools import partial, lru_cache
+import itertools as it
 import re
 from typing import Any, NoReturn
 
@@ -25,13 +28,15 @@ from jax._src import core
 from jax._src import config
 from jax._src import dtypes
 from jax._src.state.types import AbstractRef
+import jax._src.flattree as ft
 from jax._src.tree_util import (
-    PyTreeDef, tree_flatten, tree_unflatten, treedef_children,
+    PyTreeDef, tree_flatten, tree_unflatten, treedef_children, treedef_tuple,
     broadcast_prefix, prefix_errors, none_leaf_registry,
     broadcast_flattened_prefix_with_treedef, treedef_is_leaf, tree_structure,
     tracing_registry)
 from jax._src import linear_util as lu
-from jax._src.util import safe_map, HashableFunction, Unhashable, safe_zip
+from jax._src.util import (
+    safe_map, HashableFunction, Unhashable, safe_zip, Either, unzip2)
 from jax._src import traceback_util
 
 traceback_util.register_exclusion(__file__)
@@ -794,3 +799,51 @@ def _raise_no_nan_in_deoptimized(e) -> NoReturn:
         "If you see this error, consider opening a bug report at "
         "https://github.com/jax-ml/jax.")
   raise FloatingPointError(msg) from None
+
+# This is a functor a bit like FlatTree (it has `map` etc) but its main purpose
+# is to hold (args, kwargs) pairs, including static args and kwargs as needed.
+@dataclass(frozen=True)
+class ArgsAndKwargs[T]:
+  # static args as vals (left); dynamic args as avals (right)
+  args : tuple[Either[Any, FlatTree[T]], ...]
+  kwarg_keys : tuple[Any, ...]
+  kwarg_vals : tuple[Either[Any, FlatTree[T]], ...]
+
+  def map(self, f):
+    def doit(x): return x if x.is_left else Either.right(x.from_right().map(f))
+    return ArgsAndKwargs(
+        tuple(map(doit, self.args)),
+        self.kwarg_keys,
+        tuple(map(doit, self.kwarg_vals)))
+
+  def unflatten(self):
+    def doit(x): return x.from_left() if x.is_left else x.from_right().unflatten()
+    return (tuple(map(doit, self.args)),
+            {k : doit(v) for k, v in zip(self.kwarg_keys, self.kwarg_vals)})
+
+  @cached_property
+  def vals(self):
+    return [val for arg in it.chain(self.args, self.kwarg_vals)
+            if arg.is_right for val in arg.from_right()]
+
+  def __len__(self): return len(self.vals)
+  def __iter__(self): return iter(self.vals)
+
+  def update(self, vals):
+    vals_iter = iter(list(vals))
+    return self.map(lambda _: next(vals_iter))
+
+  # TODO: revise this away
+  @cached_property
+  def tree_without_statics(self):
+    return treedef_tuple(ft.from_right().treedef for ft in self.args if ft.is_right)
+
+
+def args_and_kwargs( args, kwargs={}, static_argnums=(), static_argnames=()):
+  def handle_arg(statics, i, arg):
+    return Either.left(arg) if i in statics else Either.right(ft.flatten(arg))
+  args_ = tuple(handle_arg(static_argnums, i, arg) for i, arg in enumerate(args))
+  kwargs_ = tuple((k, handle_arg(static_argnames, k, arg))
+                  for k, arg in sorted(kwargs.items()))
+  return ArgsAndKwargs(args_, *unzip2(kwargs_))
+

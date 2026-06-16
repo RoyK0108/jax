@@ -1012,15 +1012,15 @@ def remat3(f=None, /, policy=None, static_argnums=(), static_argnames=()):
     return partial(_remat3, policy, static_argnums, static_argnames, f)
 
 def _remat3(policy, static_argnums, static_argnames, f, *args, **kwargs):
-  args_ft = FlatTree.flatten_static_argnums_argnames(
+  ak = api_util.args_and_kwargs(
       args, kwargs, static_argnums, static_argnames)
-  avals_ft = args_ft.map(typeof)
+  avals = ak.map(typeof)
   dbg = api_util.debug_info(
       'remat3', f, args, kwargs, static_argnums=static_argnums,
       static_argnames=static_argnames)
-  jaxpr_, out_avals_ft = pe.trace_to_jaxpr(f, avals_ft, dbg)
+  jaxpr_, out_avals_ft = pe.trace_to_jaxpr_user(f, avals, dbg)
   jaxpr, consts = pe.separate_consts(jaxpr_)
-  out_flat = RematTraced(jaxpr, policy)(*consts, *args_ft)
+  out_flat = RematTraced(jaxpr, policy)(*consts, *ak)
   return out_avals_ft.update(out_flat).unflatten()
 
 def dce(traced):

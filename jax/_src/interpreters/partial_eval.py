@@ -2286,60 +2286,10 @@ def _lower_debug_info(hi_jaxpr, out_mut):
     debug_info = debug_info._replace(result_paths=(*qdd_paths, *lo_result_paths))
   return debug_info
 
-@dataclass(frozen=True)
-class TracingArgs:
-  # static args as vals (left); dynamic args as avals (right)
-  args : tuple[Either[Any, FlatTree[AbstractValue]], ...]
-  kwarg_keys : tuple[Any, ...]
-  kwarg_vals : tuple[Either[Any, FlatTree[AbstractValue]], ...]
-
-  def to_tracers(self, new_arg):
-    def make_arg(x):
-      if x.is_left:
-        return x.from_left()
-      else:
-        return x.from_right().map(new_arg).unflatten()
-    return (tuple(map(make_arg, self.args)),
-            {k : make_arg(v) for k, v in zip(self.kwarg_keys, self.kwarg_vals)})
-
-  @cached_property
-  def avals(self):
-    return [aval for arg in it.chain(self.args, self.kwarg_vals)
-            if arg.is_right for aval in arg.from_right()]
-
-  def __len__(self): return len(self.avals)
-  def __iter__(self): return iter(self.avals)
-
-  # TODO: revise this away
-  @cached_property
-  def tree_without_statics(self):
-    return treedef_tuple(ft.from_right().treedef for ft in self.args if ft.is_right)
-
-# There's an awkward redundancy between args/kwargs and avals here.
-# It's because jax_jit.parse_argnuments is baked into C++.
-def new_tracing_args(
-    args, kwargs={}, avals=None, static_argnums=(), static_argnames=()):
-  avals_iter = iter(list(avals)) if avals is not None else None
-  def handle_arg(statics, i, arg):
-    if i in statics:
-      return Either.left(arg)
-    else:
-      arg_ft = ft.flatten(arg)
-      if avals_iter is None:
-        avals_ft = arg_ft.map(typeof)
-      else:
-        avals_ft = arg_ft.update(list(it.islice(avals_iter, len(arg_ft))))
-      return Either.right(avals_ft)
-
-  args_ = tuple(handle_arg(static_argnums, i, arg) for i, arg in enumerate(args))
-  kwargs_ = tuple((k, handle_arg(static_argnames, k, arg))
-                  for k, arg in sorted(kwargs.items()))
-  return TracingArgs(args_, *unzip2(kwargs_))
-
 @weakref_lru_cache(maxsize=None, explain=explain)
 def trace_to_jaxpr_user(
     fun: Callable,
-    arguments: TracingArguments,
+    arguments: ArgsAndKwargs,
     debug_info: core.DebugInfo,
     *context_for_cache_key,
     requires_low=False):
@@ -2366,7 +2316,7 @@ def trace_to_jaxpr_user(
       new_arg = partial(trace.new_arg, source_info=source_info)
 
     with core.set_current_trace(trace):
-      args, kwargs = arguments.to_tracers(new_arg)
+      args, kwargs = arguments.map(new_arg).unflatten()
       ans_pytree = fun(*args, **kwargs)
       debug_info = debug_info.set_result_paths(ans_pytree)
       ans = ft.flatten(ans_pytree)
@@ -2397,6 +2347,7 @@ def trace_to_jaxpr_internal(
     *context_for_cache_key,
     requires_low=False,
 ) -> tuple[ClosedJaxpr, FlatTree]:
+  assert False
   if config.no_tracing.value:
     raise RuntimeError(f"re-tracing function {fun} for "
                        "`jit`, but 'no_tracing' is set")
@@ -2437,7 +2388,7 @@ def trace_to_jaxpr_internal(
         debug_info = debug_info.set_result_paths([''] * len(ans))
       else:
         debug_info = debug_info.set_result_paths(ans_pytree)
-        ans = FlatTree.flatten(ans_pytree)
+        ans = ft.flatten(ans_pytree)
       del ans_pytree, args, kwargs
 
     _check_returned_jaxtypes(debug_info, list(ans))
@@ -2591,7 +2542,7 @@ def try_constant_folding(primitive, tracers, params, out_avals):
 
 @weakref_lru_cache
 def lower_jaxpr2(hi_jaxpr) -> ClosedJaxpr:
-  in_avals = FlatTree.flatten(([a.lo_ty() for a in hi_jaxpr.in_aval_qdds], {}))
+  in_avals = ft.flatten(([a.lo_ty() for a in hi_jaxpr.in_aval_qdds], {}))
   lo_jaxpr, _ = lower_jaxpr(hi_jaxpr, in_avals)
   return lo_jaxpr
 
@@ -2660,13 +2611,13 @@ def lower_jaxpr(hi_jaxpr: ClosedJaxpr, lo_avals) -> tuple[ClosedJaxpr, FlatTree]
             env[eqn.outvars[0]] = outs
 
     tracer = partial(trace.to_jaxpr_tracer, source_info=src)
-    fu = FlatTree.flatten(())
+    fu = ft.flatten(())
     out_mut = [v.aval.read_loval_out(v.final_qdd, env[v]).map(tracer)
               if v.aval.has_qdd else fu for v in hi_jaxpr.invars]
     out_tracers = [dtypes.canonicalize_value(read(src, x)) for x in hi_jaxpr.outvars]
     out_tracers = [v.aval.lower_val2(hi_val).map(tracer)
                   for v, hi_val in zip(hi_jaxpr.outvars, out_tracers)]
-    out_tracers = FlatTree.pack((tuple(out_mut), tuple(out_tracers)))
+    out_tracers = ft.pack2(tuple(out_mut), tuple(out_tracers))
     out_avals = out_tracers.map(typeof)
     dbg = _lower_debug_info(hi_jaxpr, out_mut)
     jaxpr, consts = trace.frame.to_jaxpr(trace, list(out_tracers), dbg, src)
