@@ -17,6 +17,7 @@ Experimental Modules
     jax.experimental.checkify
     jax.experimental.compilation_cache
     jax.experimental.custom_partitioning
+    jax.experimental.fuse
     jax.experimental.jet
     jax.experimental.key_reuse
     jax.experimental.mesh_utils
