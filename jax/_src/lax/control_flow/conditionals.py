@@ -866,7 +866,7 @@ def _transpose_jaxpr_fancy(jaxpr, in_tree, in_avals, specs, inst_out):
     return cts_out
   dbg = jaxpr.jaxpr.debug_info.with_unknown_names()
   closed_jaxpr, out_avals = pe.trace_to_jaxpr(
-      transposed, FlatTree.flatten_args(*in_avals), dbg
+      transposed, api_util.args_and_kwargs(in_avals), dbg
   )
   return closed_jaxpr, out_avals.tree
 

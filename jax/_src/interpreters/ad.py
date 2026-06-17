@@ -81,9 +81,8 @@ def jvp_ft(fun: Callable, primals, tangents, has_aux=False, instantiate=True,
     with core.set_current_trace(trace), ctx:
       ans = fun(*in_tracers.unpack())
     if has_aux:
-      assert False, "todo"
-      ans, aux = ans
-      auxs = ft.flatten(aux).map(partial(_strip_tracer, JVPTracer, tag)),
+      ans, aux = ans.unpack()
+      auxs = aux.map(partial(_strip_tracer, JVPTracer, tag)),
     else:
       auxs = ()
 

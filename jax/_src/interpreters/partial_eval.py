@@ -2529,7 +2529,6 @@ def lower_jaxpr2(hi_jaxpr) -> ClosedJaxpr:
 
 @weakref_lru_cache
 def lower_jaxpr(hi_jaxpr: ClosedJaxpr, lo_avals_lol) -> tuple[ClosedJaxpr, FlatTree]:
-  assert not isinstance(lo_avals_lol, ft.FlatTree)  # DO NOT SUBMIT
   env: dict[Var, DynamicJaxprTracer | HTLV] = {}  # noqa # type:ignore
 
   parent_trace = core.trace_ctx.trace

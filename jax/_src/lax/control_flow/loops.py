@@ -177,7 +177,7 @@ def scan_nocarry(f: Callable[[Carry, X], tuple[Carry, Y]],
          reverse: bool = False,
          unroll: int | bool = 1) -> tuple[Carry, Y]:
   dbg_body = api_util.debug_info("scan", f, (xs,), {})
-  xs_flat = FlatTree.flatten(xs)
+  xs_flat = ft.flatten(xs)
   check_no_transformed_refs_args(lambda: dbg_body, list(xs_flat))
   del xs
   xs_avals = xs_flat.map(core.typeof)
@@ -189,7 +189,7 @@ def scan_nocarry(f: Callable[[Carry, X], tuple[Carry, Y]],
 
   x_avals = xs_avals.map(lambda aval: core.mapped_leading_aval(length, aval))
   # TODO(dougalm): promote away all weak types
-  args_avals = FlatTree.pack(((x_avals,), {}))
+  args_avals = api_util.args_and_kwargs((x_avals,))
   jaxpr, y_avals = pe.trace_to_jaxpr(f, args_avals, dbg_body)
   jaxpr, consts = pe.separate_consts(jaxpr)
 
@@ -226,7 +226,7 @@ def scan3(f: Callable[[Carry, X], tuple[Carry, Y]],
          reverse: bool = False,
          unroll: int | bool = 1,
          _split_transpose: bool = False) -> tuple[Carry, Y]:
-  init_flat = FlatTree.flatten(init)
+  init_flat = ft.flatten(init)
   carry_avals = init_flat.map(typeof)
   carry_refs = [core.new_ref(x) for x in init_flat]
 
@@ -234,7 +234,7 @@ def scan3(f: Callable[[Carry, X], tuple[Carry, Y]],
     return carry_avals.update([r[...] for r in carry_refs]).unflatten()
 
   def write_carry(val):
-    carry_flat = FlatTree.flatten(val)
+    carry_flat = ft.flatten(val)
     assert carry_flat.tree == init_flat.tree  # TODO: better error
     for ref, c in zip(carry_refs, carry_flat):
       ref[...] = c
@@ -1319,7 +1319,7 @@ def _scan_partial_eval_custom(saveable, unks_in, inst_in, eqn: core.JaxprEqn):
 
   call_jaxpr, _ = pe.trace_to_jaxpr(
       known,
-      FlatTree.flatten_args(*(v.aval for v in ins_known)),
+      api_util.args_and_kwargs(tuple(v.aval for v in ins_known)),
       debug_info=jaxpr_known_hoist.jaxpr.debug_info)
 
   eqn_known = pe.new_jaxpr_eqn(
@@ -1439,7 +1439,7 @@ def _scan_state_partial_discharge_rule(
   dbg = jaxpr.jaxpr.debug_info._replace(arg_names=arg_names, result_paths=None)
 
   new_jaxpr, _ = pe.trace_to_jaxpr(body,
-      FlatTree.flatten_args(*in_avals),
+      api_util.args_and_kwargs(in_avals),
       debug_info=dbg)
 
   pure_consts, carry, pure_xs = split_list(
@@ -1508,12 +1508,11 @@ def _scan_to_lojax(*hi_args, jaxpr, num_carry, num_consts, **params):
   num_lo_carry  = sum(len(xs) for xs in carry_lol)
   lo_args_lol = [*const_lol, *carry_lol, *ext_lol]
   rrtype = lambda x: core.mapped_leading_aval(params['length'], typeof(x))
-  in_avals_lol = [*[[typeof(x) for x in xs] for xs in const_lol],
-                  *[[typeof(x) for x in xs] for xs in carry_lol],
-                  *[[rrtype(x) for x in xs] for xs in ext_lol]]
-  in_avals = FlatTree.flatten((in_avals_lol, {}))
-
-  lo_jaxpr, out_avals = pe.lower_jaxpr(jaxpr, in_avals)
+  in_avals_lol = tuple(
+      *[tuple(typeof(x) for x in xs) for xs in const_lol],
+      *[tuple(typeof(x) for x in xs) for xs in carry_lol],
+      *[tuple(rrtype(x) for x in xs) for xs in ext_lol])
+  lo_jaxpr, out_avals = pe.lower_jaxpr(jaxpr, in_avals_lol)
 
   # move extensive outputs
   out_mut_avals, _ = out_avals.unpack()
