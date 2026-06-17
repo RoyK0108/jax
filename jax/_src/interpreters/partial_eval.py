@@ -2368,7 +2368,6 @@ def trace_to_jaxpr_internal(
 
     with core.set_current_trace(trace):
       ans = fun(*in_tracers.unpack())
-      del ans_pytree, kwargs
 
     debug_info = debug_info.set_result_paths([''] * len(ans))
     _check_returned_jaxtypes(debug_info, list(ans))

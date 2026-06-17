@@ -33,7 +33,7 @@ def fun_pt_to_ft(f_pt):
   def f_ft(*arg_fts): return flatten(f_pt(*(x.unflatten() for x in arg_fts)))
   return f_ft
 
-def flat_list(xs): return FTList(xs)
+def flat_list(xs): return FTTuple(map(FTSingleton, xs))
 def flatten(pytree):
   if type(pytree) is tuple:
     return FTTuple(map(flatten, pytree))
@@ -77,6 +77,16 @@ class FlatTree:
   @property # TODO: remove this shim
   def tree(self): return self.treedef
 
+  @property
+  def paths(self) -> FlatTree:
+    # TODO(dougalm): find a way to do this without roundtripping
+    try:
+      paths, _ = unzip2(self.registry.flatten_with_path(self.unflatten())[0])
+      assert len(paths) == len(self.xs)
+      return self.update(paths)
+    except:
+      return self.update([()] * len(self))  # not our fault
+
 class FTTuple(FlatTree):
 
   def __init__(self, trees):
@@ -112,21 +122,21 @@ class FTWithAux(FlatTree):
             self.ft == other.ft and self.aux == other.aux)
   def __hash__(self): return hash((self.xs, self.aux))
 
-class FTList(FlatTree):
-  def __init__(self, xs):
-    xs = xs if isinstance(xs, tuple) else tuple(xs)
-    self.xs = xs
+class FTSingleton(FlatTree):
+  def __init__(self, x): self.x = x
   def from_list(self): return list(self.xs)
-  def __iter__(self): return iter(self.xs)
-  def __len__(self): return len(self.xs)
-  def _iter_update(self, xs_iter): return FTList(it.islice(xs_iter, len(self.xs)))
-  def __repr__(self): return repr(list(self.xs))
-  def __eq__(self, other): return isinstance(other, FTList) and self.xs == other.xs
-  def __hash__(self): return hash(self.xs)
+  def unflatten(self): return self.x
+  def __iter__(self): return iter([self.x])
+  def __len__(self): return 1
+  def _iter_update(self, xs_iter): return FTSingleton(next(xs_iter))
+  def __repr__(self): return repr(self.x)
+  def __eq__(self, other): return isinstance(other, FTSingleton) and self.x == other.x
+  def __hash__(self): return hash(self.x)
 
 class FTFiltered(FlatTree):
   def __init__(self, xs, ft_statics):
     assert isinstance(ft_statics, FlatTree)
+    xs = xs if isinstance(xs, tuple) else tuple(xs)
     self.xs = xs
     self.ft_statics = ft_statics
   def unfilter(self):
@@ -160,14 +170,4 @@ class FTPyTree(FlatTree):
     return (isinstance(other, FTPyTree) and
             self.xs == other.xs and self.treedef == other.treedef)
   def __hash__(self): return hash((self.xs, self.treedef))
-
-  @property
-  def paths(self) -> FlatTree:
-    # TODO(dougalm): find a way to do this without roundtripping
-    try:
-      paths, _ = unzip2(self.registry.flatten_with_path(self.unflatten())[0])
-      assert len(paths) == len(self.xs)
-      return self.update(paths)
-    except:
-      return self.update([()] * len(self.xs))  # not our fault
 

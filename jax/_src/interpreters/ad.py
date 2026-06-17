@@ -80,14 +80,14 @@ def jvp_ft(fun: Callable, primals, tangents, has_aux=False, instantiate=True,
     in_tracers = primals.map2(tangents, lambda x, t: maybe_jvp_tracer(trace, x, t))
     with core.set_current_trace(trace), ctx:
       ans = fun(*in_tracers.unpack())
-    breakpoint()
     if has_aux:
+      assert False, "todo"
       ans, aux = ans
       auxs = ft.flatten(aux).map(partial(_strip_tracer, JVPTracer, tag)),
     else:
       auxs = ()
 
-    ans_ft = ft.flatten(ans).map(trace.to_primal_tangent_pair)
+    ans_ft = ans.map(trace.to_primal_tangent_pair)
     out_primals = ans_ft.map(lambda pt: pt[0])
     out_tangents = ans_ft.map(lambda pt: pt[1])
 
@@ -1250,9 +1250,10 @@ def _jvp_jaxpr(jaxpr: core.ClosedJaxpr,
   def f_jvp_traceable(primals, nonzero_tangents):
     tangents = nonzero_tangents.unfilter()
     primals_out, tangents_out = jvp_ft(
-        core.jaxpr_as_ft_fun(jaxpr),
+        ft.fun_pt_to_ft(core.jaxpr_as_fun(jaxpr)),
         primals, tangents, instantiate=instantiate, transform_stack=False)
-    tangents_out = tangents_out.filter(lambda t: type(t) is not Zero)
+    nzs = [type(t) is not Zero for t in tangents_out]
+    tangents_out = tangents_out.filter(nzs)
     return ft.pack(primals_out, tangents_out)
   jaxpr, out_avals = pe.trace_to_jaxpr_internal(f_jvp_traceable, avals_in, dbg)
   _, nz_tangent_avals_out = out_avals.unpack()
