@@ -838,7 +838,6 @@ class ArgsAndKwargs[T]:
   def tree_without_statics(self):
     return treedef_tuple(ft.from_right().treedef for ft in self.args if ft.is_right)
 
-
 def args_and_kwargs( args, kwargs={}, static_argnums=(), static_argnames=()):
   def handle_arg(statics, i, arg):
     return Either.left(arg) if i in statics else Either.right(ft.flatten(arg))
