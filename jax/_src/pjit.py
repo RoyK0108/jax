@@ -882,7 +882,7 @@ def _to_lojax(*hi_args, jaxpr, **params):
                  for aval, x in zip(jaxpr.in_aval_qdds, hi_args)]
   lo_args = [x for xs in lo_args_lol for x in xs]
 
-  in_avals = ft.flatten(([[typeof(x) for x in xs] for xs in lo_args_lol], {}))
+  in_avals = tuple(tuple(typeof(x) for x in xs) for xs in lo_args_lol)
   lo_jaxpr, out_avals = pe.lower_jaxpr(jaxpr, in_avals)
   params = _lojax_expand_params(in_avals, out_avals, **params)
 
@@ -904,10 +904,8 @@ def _converted_mutables_add_params(
 
 
 def _lojax_expand_params(
-    in_avals_, out_avals, donated_invars, in_shardings, in_layouts,
+    in_lol, out_avals, donated_invars, in_shardings, in_layouts,
     out_shardings, out_layouts, **params):
-  in_avals, () = in_avals_.unpack()
-  in_lol = in_avals.unpack()
   mut_out_lol, out_lol_ = out_avals.unpack()
   out_lol = out_lol_.unpack()
 

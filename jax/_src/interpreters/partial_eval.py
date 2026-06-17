@@ -2342,12 +2342,11 @@ def trace_to_jaxpr_user(
 
 def trace_to_jaxpr_internal(
     fun: Callable,
-    in_avals: FlatTree,  # (args, kwargs) pair
+    in_avals: FlatTree,  # args tuple
     debug_info: core.DebugInfo,
     *context_for_cache_key,
     requires_low=False,
 ) -> tuple[ClosedJaxpr, FlatTree]:
-  assert False
   if config.no_tracing.value:
     raise RuntimeError(f"re-tracing function {fun} for "
                        "`jit`, but 'no_tracing' is set")
@@ -2373,22 +2372,10 @@ def trace_to_jaxpr_internal(
       in_tracers = in_avals.map(partial(trace.new_arg, source_info=source_info))
 
     with core.set_current_trace(trace):
-      if fun_takes_flat_tree_arg:
-        args_ft, kwargs_ft = in_tracers.unpack()
-        assert kwargs_ft.unflatten() == {}  # TODO: handle kwargs
-        kwargs = {}
-        args = args_ft.unpack()
-        del args_ft
-      else:
-        args, kwargs = in_tracers.unflatten()
-      ans_pytree = fun(*args, **kwargs)
-      if fun_returns_flat_tree:
-        # TODO(dougalm): make result paths optional
-        ans = ans_pytree
-        debug_info = debug_info.set_result_paths([''] * len(ans))
-      else:
-        debug_info = debug_info.set_result_paths(ans_pytree)
-        ans = ft.flatten(ans_pytree)
+      args = in_tracers.unpack()
+      ans_pytree = fun(*args)
+      ans = ans_pytree
+      debug_info = debug_info.set_result_paths([''] * len(ans))
       del ans_pytree, args, kwargs
 
     _check_returned_jaxtypes(debug_info, list(ans))
@@ -2547,7 +2534,8 @@ def lower_jaxpr2(hi_jaxpr) -> ClosedJaxpr:
   return lo_jaxpr
 
 @weakref_lru_cache
-def lower_jaxpr(hi_jaxpr: ClosedJaxpr, lo_avals) -> tuple[ClosedJaxpr, FlatTree]:
+def lower_jaxpr(hi_jaxpr: ClosedJaxpr, lo_avals_lol) -> tuple[ClosedJaxpr, FlatTree]:
+  assert not isinstance(lo_avals_lol, ft.FlatTree)  # DO NOT SUBMIT
   env: dict[Var, DynamicJaxprTracer | HTLV] = {}  # noqa # type:ignore
 
   parent_trace = core.trace_ctx.trace
@@ -2567,7 +2555,6 @@ def lower_jaxpr(hi_jaxpr: ClosedJaxpr, lo_avals) -> tuple[ClosedJaxpr, FlatTree]
         TracebackScope()):
     src = source_info_util.current()
 
-    lo_avals_lol, () = lo_avals.unflatten()
     for v, xs in zip(hi_jaxpr.invars, lo_avals_lol):
       if v.aval.is_high:
         xs = [trace.new_arg(x, source_info=src) for x in xs]

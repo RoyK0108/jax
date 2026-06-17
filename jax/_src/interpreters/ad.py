@@ -69,7 +69,7 @@ def jvp(fun: Callable, primals, tangents, has_aux=False, instantiate=True,
         p2tz(t) if not isinstance(t, Zero)
         and isinstance(typeof(t), core.ShapedArray)
         and dtype(t) == float0 else t)
-    in_tracers = primals.map2(lambda x, t: maybe_jvp_tracer(trace, x, t), tangents)
+    in_tracers = primals.map2(tangents, lambda x, t: maybe_jvp_tracer(trace, x, t))
     with core.set_current_trace(trace), ctx:
       ans = fun(*in_tracers.unflatten())
     if has_aux:
@@ -84,9 +84,8 @@ def jvp(fun: Callable, primals, tangents, has_aux=False, instantiate=True,
 
   if type(instantiate) is bool:
     instantiate = [instantiate] * len(out_tangents)
-  out_tangents = out_tangents.map2(
-      lambda t, inst: instantiate_zeros(t) if inst else t, instantiate
-  )
+  out_tangents = out_tangents.map2(instantiate,
+      lambda t, inst: instantiate_zeros(t) if inst else t)
   auxs = tuple(aux.unflatten() for aux in auxs)
   return out_primals, out_tangents, *auxs
 
@@ -1233,11 +1232,11 @@ def jvp_jaxpr(jaxpr: core.ClosedJaxpr, nonzeros: Sequence[bool],
 def _jvp_jaxpr(jaxpr: core.ClosedJaxpr,
                nonzeros: Sequence[bool], instantiate: Sequence[bool]):
   assert len(jaxpr.in_avals) == len(nonzeros)
-  primal_avals_in = ft.flatten_list(jaxpr.in_aval_qdds)
+  primal_avals_in = ft.flat_list(jaxpr.in_aval_qdds)
   tangent_avals_in = primal_avals_in.map(lambda aval: aval.to_tangent_aval())
-  nz_tangent_avals_in = tangent_avals_in.map2(
-      lambda aval, nz: aval if nz else Zero(aval), nonzeros).filter_with_mask(nonzeros)
-  avals_in = ft.pack_args(primal_avals_in, nz_tangent_avals_in)
+  nz_tangent_avals_in = tangent_avals_in.map2(nonzeros,
+      lambda aval, nz: aval if nz else Zero(aval)).filter(nonzeros)
+  avals_in = ft.pack(primal_avals_in, nz_tangent_avals_in)
   dbg = jaxpr.jaxpr.debug_info.with_unknown_names()
   def f_jvp_traceable(primals, nonzero_tangents):
     tangents = nonzero_tangents.unfilter()
@@ -1246,11 +1245,9 @@ def _jvp_jaxpr(jaxpr: core.ClosedJaxpr,
                                     transform_stack=False)
     primals_out = ft.flatten_list(primals_out)
     tangents_out = ft.flatten_list(tangents_out).filter(lambda t: type(t) is not Zero)
-    return ft.pack((primals_out, tangents_out))
+    return ft.pack(primals_out, tangents_out)
 
-  jaxpr, out_avals = pe.trace_to_jaxpr(f_jvp_traceable, avals_in, dbg,
-                                       fun_takes_flat_tree_arg=True,
-                                       fun_returns_flat_tree=True)
+  jaxpr, out_avals = pe.trace_to_jaxpr_internal( f_jvp_traceable, avals_in, dbg)
 
   _, nz_tangent_avals_out = out_avals.unpack()
   tangent_avals_out = nz_tangent_avals_out.unfilter()
