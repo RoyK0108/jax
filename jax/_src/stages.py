@@ -456,7 +456,7 @@ class Traced(Stage):
     hi_jaxpr = self.jaxpr
     _, closed_over_himutables = pe.convert_const_himutables(hi_jaxpr)
     if closed_over_himutables: raise NotImplementedError  # TODO(mattjj)
-    in_avals = FlatTree.flatten(([a.lo_ty() for a in hi_jaxpr.in_aval_qdds], {}))
+    in_avals = tuple(tuple(a.lo_ty()) for a in hi_jaxpr.in_aval_qdds)
     lo_jaxpr, out_avals = pe.lower_jaxpr(hi_jaxpr, in_avals)
     params = dict(_lojax_expand_params(in_avals, out_avals, **self._params), jaxpr=lo_jaxpr)
     if any(a.is_high for a in hi_jaxpr.final_aval_qdds):

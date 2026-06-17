@@ -827,6 +827,10 @@ class ArgsAndKwargs[T]:
 
   # TODO: revise this away
   @cached_property
+  def tree(self): return self.tree_without_statics
+
+  # TODO: revise this away
+  @cached_property
   def tree_without_statics(self):
     args_tree = treedef_tuple(
         ft.from_right().treedef for ft in self.args if ft.is_right)

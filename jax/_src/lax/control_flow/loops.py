@@ -1508,7 +1508,7 @@ def _scan_to_lojax(*hi_args, jaxpr, num_carry, num_consts, **params):
   num_lo_carry  = sum(len(xs) for xs in carry_lol)
   lo_args_lol = [*const_lol, *carry_lol, *ext_lol]
   rrtype = lambda x: core.mapped_leading_aval(params['length'], typeof(x))
-  in_avals_lol = tuple(
+  in_avals_lol = (
       *[tuple(typeof(x) for x in xs) for xs in const_lol],
       *[tuple(typeof(x) for x in xs) for xs in carry_lol],
       *[tuple(rrtype(x) for x in xs) for xs in ext_lol])
