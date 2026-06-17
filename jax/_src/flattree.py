@@ -23,10 +23,23 @@ from jax._src import tree_util
 
 hole = util.Singleton("_")
 
+# TODO: eventually all our internal APIs whould work with flattree-accepting
+# functions and we shouldn't need to use these conversion functions much.
+def fun_ft_to_pt(f_ft):
+  def f_pt(*arg_pts): return f_ft(*map(flatten, arg_pts)).unflatten()
+  return f_pt
+
+def fun_pt_to_ft(f_pt):
+  def f_ft(*arg_fts): return flatten(f_pt(*(x.unflatten() for x in arg_fts)))
+  return f_ft
+
 def flat_list(xs): return FTList(xs)
 def flatten(pytree):
-  xs, treedef = tree.flatten(pytree)
-  return FTPyTree(xs, treedef)
+  if type(pytree) is tuple:
+    return FTTuple(map(flatten, pytree))
+  else:
+    xs, treedef = tree.flatten(pytree)
+    return FTPyTree(xs, treedef)
 def pack(*trees): return FTTuple(trees)
 def pack2(*trees): return FTTuple(FTTuple(t) for t in trees)
 
@@ -61,6 +74,8 @@ class FlatTree:
     kept = [x for x, keep in self if keep]
     put_aside = self.map(lambda x_keep: hole if x_keep[1] else x_keep[0])
     return FTFiltered(kept, put_aside)
+  @property # TODO: remove this shim
+  def tree(self): return self.treedef
 
 class FTTuple(FlatTree):
 
@@ -68,6 +83,9 @@ class FTTuple(FlatTree):
     trees = trees if isinstance(trees, tuple) else tuple(trees)
     for t in trees: assert isinstance(t, FlatTree)
     self.trees = trees
+  def unflatten(self): return tuple(t.unflatten() for t in self.trees)
+  @cached_property
+  def treedef(self): return tree_util.treedef_tuple(t.treedef for t in self.trees)
   def unpack(self): return self.trees
   def _filter(self): return FTTuple(t._filter() for t in self.trees)
   def unfilter(self): return FTTuple(t.unfilter() for t in self.trees)
@@ -116,7 +134,8 @@ class FTFiltered(FlatTree):
     return self.ft_statics.map(lambda s: next(xs_iter) if s is hole else s)
   def __iter__(self): return iter(self.xs)
   def __len__(self): return len(self.xs)
-  def _iter_update(self, xs_iter): return FTList(it.islice(xs_iter, len(self.xs)))
+  def _iter_update(self, xs_iter):
+    return FTFiltered(it.islice(xs_iter, len(self.xs)), self.ft_statics)
   def __repr__(self): return f"Filtered(vals={self.xs}, ft={self.ft_statics})"
   def __eq__(self, other):
     return (isinstance(other, FTFiltered) and
@@ -141,9 +160,6 @@ class FTPyTree(FlatTree):
     return (isinstance(other, FTPyTree) and
             self.xs == other.xs and self.treedef == other.treedef)
   def __hash__(self): return hash((self.xs, self.treedef))
-
-  @cached_property
-  def tree(self): return self.treedef
 
   @property
   def paths(self) -> FlatTree:

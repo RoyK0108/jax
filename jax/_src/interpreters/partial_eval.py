@@ -2344,13 +2344,8 @@ def trace_to_jaxpr_internal(
     fun: Callable,
     in_avals: FlatTree,  # args tuple
     debug_info: core.DebugInfo,
-    *context_for_cache_key,
     requires_low=False,
 ) -> tuple[ClosedJaxpr, FlatTree]:
-  if config.no_tracing.value:
-    raise RuntimeError(f"re-tracing function {fun} for "
-                       "`jit`, but 'no_tracing' is set")
-  del context_for_cache_key  # read implicitly, e.g. qdd state
   test_event("trace_to_jaxpr")
   config.enable_checks.value and debug_info.assert_arg_names(len(in_avals))
   parent_trace = core.trace_ctx.trace
@@ -2372,12 +2367,10 @@ def trace_to_jaxpr_internal(
       in_tracers = in_avals.map(partial(trace.new_arg, source_info=source_info))
 
     with core.set_current_trace(trace):
-      args = in_tracers.unpack()
-      ans_pytree = fun(*args)
-      ans = ans_pytree
-      debug_info = debug_info.set_result_paths([''] * len(ans))
-      del ans_pytree, args, kwargs
+      ans = fun(*in_tracers.unpack())
+      del ans_pytree, kwargs
 
+    debug_info = debug_info.set_result_paths([''] * len(ans))
     _check_returned_jaxtypes(debug_info, list(ans))
     ans = ans.map(dtypes.canonicalize_value)
     out_avals = ans.map(typeof)

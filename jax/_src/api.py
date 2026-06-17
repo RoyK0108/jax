@@ -1410,7 +1410,8 @@ def _jvp(fun: Callable, primals, tangents, has_aux=False):
       raise ValueError("jvp called with different primal and tangent shapes;"
                        f"Got primal shape {np.shape(p)} and tangent shape as {np.shape(t)}")
 
-  out_primals, out_tangents, *aux = ad.jvp(fun, ps_ft, ts_ft, has_aux=has_aux)
+  out_primals, out_tangents, *aux = ad.jvp_ft(
+      ft.fun_pt_to_ft(fun), ps_ft, ts_ft, has_aux=has_aux)
   return out_primals.unflatten(), out_tangents.unflatten(), *aux
 
 @overload

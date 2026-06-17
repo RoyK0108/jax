@@ -58,8 +58,16 @@ def _update_annotation(
   tan_types = [aval.to_tangent_aval() for nz, aval in zip(nonzeros, orig_type) if nz]
   return lu.annotate(f, (*orig_type, *tan_types))
 
+# TODO: remove this and make jvp_ft the default
 def jvp(fun: Callable, primals, tangents, has_aux=False, instantiate=True,
         transform_stack=True) -> Any:
+  primals_out_ft, tangents_out_ft = jvp_ft(
+      ft.fun_pt_to_ft(fun), ft.flatten(primals), ft.flatten(tangents),
+      has_aux=has_aux, instantiate=instantiate)
+  return primals_out_ft.unflatten(), tangents_out.unflatten()
+
+def jvp_ft(fun: Callable, primals, tangents, has_aux=False, instantiate=True,
+           transform_stack=True) -> Any:
   ctx = (source_info_util.transform_name_stack('jvp') if transform_stack
          else contextlib.nullcontext())
   with core.take_current_trace() as parent_trace:
@@ -71,7 +79,8 @@ def jvp(fun: Callable, primals, tangents, has_aux=False, instantiate=True,
         and dtype(t) == float0 else t)
     in_tracers = primals.map2(tangents, lambda x, t: maybe_jvp_tracer(trace, x, t))
     with core.set_current_trace(trace), ctx:
-      ans = fun(*in_tracers.unflatten())
+      ans = fun(*in_tracers.unpack())
+    breakpoint()
     if has_aux:
       ans, aux = ans
       auxs = ft.flatten(aux).map(partial(_strip_tracer, JVPTracer, tag)),
@@ -1240,15 +1249,12 @@ def _jvp_jaxpr(jaxpr: core.ClosedJaxpr,
   dbg = jaxpr.jaxpr.debug_info.with_unknown_names()
   def f_jvp_traceable(primals, nonzero_tangents):
     tangents = nonzero_tangents.unfilter()
-    primals_out, tangents_out = jvp(core.jaxpr_as_fun(jaxpr), primals, tangents,
-                                    instantiate=instantiate,
-                                    transform_stack=False)
-    primals_out = ft.flatten_list(primals_out)
-    tangents_out = ft.flatten_list(tangents_out).filter(lambda t: type(t) is not Zero)
+    primals_out, tangents_out = jvp_ft(
+        core.jaxpr_as_ft_fun(jaxpr),
+        primals, tangents, instantiate=instantiate, transform_stack=False)
+    tangents_out = tangents_out.filter(lambda t: type(t) is not Zero)
     return ft.pack(primals_out, tangents_out)
-
-  jaxpr, out_avals = pe.trace_to_jaxpr_internal( f_jvp_traceable, avals_in, dbg)
-
+  jaxpr, out_avals = pe.trace_to_jaxpr_internal(f_jvp_traceable, avals_in, dbg)
   _, nz_tangent_avals_out = out_avals.unpack()
   tangent_avals_out = nz_tangent_avals_out.unfilter()
   out_nonzeros = [type(t) is not Zero for t in tangent_avals_out]
