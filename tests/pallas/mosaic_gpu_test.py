@@ -2839,9 +2839,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     np.testing.assert_array_equal(kernel_fn(x), expected)
 
   def test_ref_union_caching(self):
-    # TODO(bchetioui,allanrenucci): debug.
-    # ValueError: Shape mismatch between variable and %45 = "mosaic_gpu.slice_smem"():r-0: (64, 32) != (64, 64)
-    self.skip_if_wg_semantics()
     @self.kernel(
       out_type=(
         jax.ShapeDtypeStruct((64, 32), jnp.float32),

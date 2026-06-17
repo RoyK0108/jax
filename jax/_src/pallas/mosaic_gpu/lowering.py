@@ -482,6 +482,11 @@ class ModuleContext:
   reduction_scratch_bytes: int
   warp_axis_name: jax_core.AxisName | None = None
   outer_traceback: xc.Traceback | None = None
+  _allocation_counter: int = dataclasses.field(default=0, init=False)
+
+  def next_allocation_id(self) -> int:
+    self._allocation_counter += 1
+    return self._allocation_counter
 
   @property
   def single_lane_predicate(self) -> ir.Value:
@@ -609,7 +614,9 @@ class ModuleContext:
       assert smem_base is not None
       view = memref_dialect.view(scratch_ty, smem_base, _as_index(off), [])
     else:
-      view = mgpu.dialect.slice_smem(scratch_ty, off)
+      view = mgpu.dialect.slice_smem(
+          scratch_ty, off, alias_id=self.next_allocation_id()
+      )
 
     off += gpu_core.align_to(
         math.prod(struct.shape)
@@ -1529,11 +1536,14 @@ def _extract_aliased_ref(
             ref_ty = ir.MemRefType.get(
                 transformed_shape, mlir_dtype, memory_space=mgpu_utils.smem()
             )
-            slice_op = mgpu.dialect.SliceSMEMOp(ref_ty, total_offset)
-
-            # The composite key formed of `(total_offset, alias_group_idx)` is
-            # a unique identifier across:
-            #   - different RefUnions (different `total_offset`, since two
+            assert ref.owner.alias_id is not None
+            alloc_id = ref.owner.alias_id.value
+            assert alloc_id & 0xFFFF == alloc_id
+            assert alias_group_idx & 0xFFFF == alias_group_idx
+            alias_id = alloc_id << 16 | alias_group_idx
+            # The composite key formed of `(total_offset, alloc_id, alias_group_idx)`
+            # is a unique identifier across:
+            #   - different RefUnions (different `alloc_id`, since two
             #     distinct RefUnions represent two non-overlapping SMEM
             #     allocations);
             #   - different ref_groups within a RefUnion (different
@@ -1543,8 +1553,9 @@ def _extract_aliased_ref(
             #     the beginning of the RefUnion added to the base offset of the
             #     RefUnion). This only holds in the absence of 0-sized refs,
             #     which don't serve a practical purpose anyway.
-            slice_op.attributes["alias_id"] = ir.IntegerAttr.get(i32, alias_group_idx)
-            ref = slice_op.result
+            ref = mgpu.dialect.slice_smem(
+                ref_ty, total_offset, alias_id=alias_id
+            )
           else:
             ref_bytes = ref_bits // 8
             ref = mgpu.memref_slice(ref, slice(offset, offset + ref_bytes))
