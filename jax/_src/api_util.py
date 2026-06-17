@@ -260,7 +260,7 @@ def _argnums_partial(_fun: Callable,
 
 
 @lru_cache(maxsize=4096)
-def donation_vector(donate_argnums, donate_argnames, in_tree,
+def donation_vector(donate_argnums, donate_argnames, ak,
                     kws: bool = True) -> tuple[bool, ...]:
   """Returns a tuple with a boolean value for each leaf in args and kwargs.
 
@@ -274,19 +274,7 @@ def donation_vector(donate_argnums, donate_argnames, in_tree,
   When both donate_argnums and donate_argnames are specified, only the args and
   kwargs specified are donated.
   """
-  res: list[bool] = []
-  if kws:
-    args_tree, kwargs_tree = treedef_children(in_tree)
-  else:
-    args_tree, kwargs_tree = in_tree, None
-  for i, arg in enumerate(args_tree.children()):
-    donate = bool(i in donate_argnums)
-    res.extend((donate,) * arg.num_leaves)
-  if kwargs_tree is not None:
-    for key, val in zip(kwargs_tree.node_data()[1], kwargs_tree.children()):  # pyrefly: ignore[unsupported-operation]
-      donate = key in donate_argnames
-      res.extend((donate,) * val.num_leaves)
-  return tuple(res)
+  return ak.bitvector(donate_argnums, donate_argnames)
 
 def rebase_donate_argnums(donate_argnums, static_argnums) -> tuple[int, ...]:
   """Shifts donate to account for static.
@@ -836,7 +824,22 @@ class ArgsAndKwargs[T]:
   # TODO: revise this away
   @cached_property
   def tree_without_statics(self):
-    return treedef_tuple(ft.from_right().treedef for ft in self.args if ft.is_right)
+    args_tree = treedef_tuple(
+        ft.from_right().treedef for ft in self.args if ft.is_right)
+    # TOOD: better way to do this? dict version of treedef_tuple?
+    _, kwargs_tree = tree_flatten(
+        {k : v.from_right() for k, v in zip(self.kwarg_keys, self.kwarg_vals)
+         if v.is_right})
+    return treedef_tuple((args_tree, kwargs_tree))
+
+  def bitvector(self, argnums, argnames):
+    bits = []
+    def handle_arg(i_chosen, i_arg):
+      i, arg = i_arg
+      if arg.is_right: bits.extend((i in i_chosen,) * len(arg.from_right()))
+    map(partial(handle_arg, argnums) , enumerate(self.args))
+    map(partial(handle_arg, argnames), zip(self.kwarg_keys, self.kwarg_vals))
+    return tuple(bits)
 
 def args_and_kwargs( args, kwargs={}, static_argnums=(), static_argnames=()):
   def handle_arg(statics, i, arg):

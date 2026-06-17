@@ -481,8 +481,7 @@ def _trace_for_jit(
         "device is also specified as an argument to jit.")
 
   if (ji.donate_argnums or ji.donate_argnames) and not config.debug_nans.value:
-    donated_invars = donation_vector(ji.donate_argnums, ji.donate_argnames,
-                                     ak.tree)
+    donated_invars = donation_vector(ji.donate_argnums, ji.donate_argnames, ak)
   else:
     donated_invars = (False,) * len(ak)
 
@@ -577,7 +576,7 @@ def _trace_for_jit(
       inline=ji.inline,
       compiler_options_kvs=ji.compiler_options_kvs,
   )
-  return PjitParams(consts, params, list(ak), ak,
+  return PjitParams(consts, params, list(ak), ak.tree_without_statics,
                     out_avals.treedef, dbg.safe_arg_names(len(ak)))
 
 
