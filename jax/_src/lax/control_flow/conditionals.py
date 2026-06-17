@@ -268,13 +268,12 @@ def cond(pred, true_fun: Callable, false_fun: Callable, *operands,
     else:
       return false_fun(*operands)
 
-  args = FlatTree.flatten((operands, {}))
+  args = api_util.args_and_kwargs(operands)
   dbg_true = api_util.debug_info("cond", true_fun, operands, {})
   api_util.check_no_transformed_refs_args(lambda: dbg_true, args.vals)
   avals = args.map(core.typeof)
-  avals = avals.map2(
-      lambda a, x: core.AvalQDD(a, cur_qdd(x)) if a.has_qdd else a,
-      list(args))
+  avals = avals.map2(list(args),
+      lambda a, x: core.AvalQDD(a, cur_qdd(x)) if a.has_qdd else a)
   if config.mutable_array_checks.value:
     api_util.check_no_aliased_ref_args(lambda: dbg_true, list(avals), list(args))
   dbg_false = api_util.debug_info("cond", false_fun, operands, {})

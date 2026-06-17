@@ -457,7 +457,7 @@ def _trace_to_jaxpr(fun: Callable,
                     debug: core.DebugInfo
                     ) -> tuple[core.Jaxpr, Sequence[Any], PyTreeDef]:
   try:
-    closed_jaxpr, out_avals = pe.trace_to_jaxpr_user(fun, ak, debug)
+    closed_jaxpr, out_avals = pe.trace_to_jaxpr(fun, ak, debug)
   except core.ConcretizationTypeError as e:
     msg, = e.args
     if 'for checkpoint' in msg:
@@ -795,7 +795,7 @@ def _transpose_jaxpr(jaxpr: core.ClosedJaxpr,
 
   dbg = jaxpr.jaxpr.debug_info.with_unknown_names()
   ak = api_util.args_and_kwargs(tuple(in_avals))
-  transposed_closed_jaxpr, _ = pe.trace_to_jaxpr_user(transposed, ak, dbg)
+  transposed_closed_jaxpr, _ = pe.trace_to_jaxpr(transposed, ak, dbg)
   return transposed_closed_jaxpr, cell.in_cts_zero  # pyrefly: ignore[missing-attribute]
 
 def remat_vmap(axis_data, args, dims, *, jaxpr, **params):
@@ -984,7 +984,7 @@ def _remat3(policy, static_argnums, static_argnames, f, *args, **kwargs):
   dbg = api_util.debug_info(
       'remat3', f, args, kwargs, static_argnums=static_argnums,
       static_argnames=static_argnames)
-  jaxpr_, out_avals_ft = pe.trace_to_jaxpr_user(f, avals, dbg)
+  jaxpr_, out_avals_ft = pe.trace_to_jaxpr(f, avals, dbg)
   jaxpr, consts = pe.separate_consts(jaxpr_)
   out_flat = RematTraced(jaxpr, policy)(*consts, *ak)
   return out_avals_ft.update(out_flat).unflatten()

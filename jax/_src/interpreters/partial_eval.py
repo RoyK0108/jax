@@ -28,6 +28,7 @@ from weakref import ReferenceType, WeakValueDictionary, finalize, ref
 import numpy as np
 
 from jax._src import ad_util
+from jax._src import api_util
 from jax._src import config
 from jax._src import core
 from jax._src import dtypes
@@ -2287,17 +2288,18 @@ def _lower_debug_info(hi_jaxpr, out_mut):
   return debug_info
 
 @weakref_lru_cache(maxsize=None, explain=explain)
-def trace_to_jaxpr_user(
+def trace_to_jaxpr(
     fun: Callable,
     arguments: ArgsAndKwargs,
     debug_info: core.DebugInfo,
     *context_for_cache_key,
     requires_low=False):
+  assert isinstance(arguments, api_util.ArgsAndKwargs)
   if config.no_tracing.value:
     raise RuntimeError(f"re-tracing function {fun} for "
                        "`jit`, but 'no_tracing' is set")
   del context_for_cache_key  # read implicitly, e.g. qdd state
-  test_event("trace_to_jaxpr_user")
+  test_event("trace_to_jaxpr")
   parent_trace = core.trace_ctx.trace
   trace = DynamicJaxprTrace(debug_info, parent_trace=parent_trace,
                             lower=requires_low)

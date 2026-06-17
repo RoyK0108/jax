@@ -31,6 +31,7 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
+from jax._src import flattree as ft
 from jax._src import hijax
 from jax._src import linear_util as lu
 from jax._src import sharding_impls as sharding
@@ -151,8 +152,8 @@ class Scan3(hijax.VJPHiPrimitive):
     return [out[...] for out in outs]
 
   def jvp(self, primals, tangents):
-    primals_ft = FlatTree.flatten(primals)
-    tangents_ft = FlatTree.flatten(tangents, is_leaf=lambda x: type(x) is ad.Zero)
+    primals_ft = ft.flatten(primals)
+    tangents_ft = ft.flatten(tangents, is_leaf=lambda x: type(x) is ad.Zero)
     nonzeros = [type(t) is not ad_util.Zero for t in tangents_ft]
     tangent_extensives = keep(nonzeros, self.extensives)
     tangents_nz = keep(nonzeros, tangents_ft)
@@ -354,10 +355,10 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
     raise TypeError("lax.scan: f argument should be a callable.")
 
   dbg_body = api_util.debug_info("scan", f, (init, xs), {})
-  init_flat = FlatTree.flatten(init)
-  xs_flat = FlatTree.flatten(xs)
-  args = FlatTree.pack((init_flat, xs_flat))
-  check_no_transformed_refs_args(lambda: dbg_body, args.vals)
+  init_flat = ft.flatten(init)
+  xs_flat = ft.flatten(xs)
+  args = ft.pack(init_flat, xs_flat)
+  check_no_transformed_refs_args(lambda: dbg_body, list(args))
   del init, xs
 
   args_avals = args.map(core.typeof)
@@ -384,8 +385,8 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
 
   x_avals = xs_avals.map(lambda aval: core.mapped_leading_aval(length, aval))
   def _create_jaxpr(carry_avals):
-    new_arg_avals = FlatTree.pack(((carry_avals, x_avals), {}))
-    jaxpr, out_avals = pe.trace_to_jaxpr(f, new_arg_avals, dbg_body)
+    ak = api_util.args_and_kwargs_from_fts(carry_avals, x_avals)
+    jaxpr, out_avals = pe.trace_to_jaxpr(f, ak, dbg_body)
     jaxpr, consts = pe.separate_consts(jaxpr)
     if len(out_avals.unpack()) != 2:
       msg = "scan body output must be a pair, got {}."
@@ -407,8 +408,8 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
   if len(carry_out_avals) != len(init_avals):
     _check_carry_type('scan body', f, init_avals, carry_out_avals)
   init_flat, changed = init_flat.map3(
-     _promote_weak_typed_input,
-     init_avals, carry_out_avals).unzip2()
+     init_avals, carry_out_avals,
+     _promote_weak_typed_input).unzip2()
   num_carry, num_xs, num_ys = len(init_flat), len(xs_flat), len(ys_avals)
   if any(changed):
     init_avals = init_flat.map(core.typeof)
@@ -431,7 +432,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
   if unroll < 0:
     raise ValueError("`unroll` must be a `bool` or a non-negative `int`.")
 
-  args_flat = [*init_flat.vals, *xs_flat.vals]
+  args_flat = [*init_flat, *xs_flat]
 
   # If the body forwards an input carry to an output carry, that input is
   # read-only and can be moved to be a const. Doing so can lead to efficiency
@@ -1613,9 +1614,9 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
       pass
 
   def _create_jaxpr(init_avals):
-    args_avals = FlatTree.pack(((init_avals,), {}))
-    cond_jaxpr, cond_out_avals = pe.trace_to_jaxpr(cond_fun, args_avals, cond_dbg)
-    body_jaxpr, body_out_avals = pe.trace_to_jaxpr(body_fun, args_avals, body_dbg)
+    ak = api_util.args_and_kwargs_from_fts(init_avals)
+    cond_jaxpr, cond_out_avals = pe.trace_to_jaxpr(cond_fun, ak, cond_dbg)
+    body_jaxpr, body_out_avals = pe.trace_to_jaxpr(body_fun, ak, body_dbg)
     if not treedef_is_leaf(cond_out_avals.tree) or len(cond_jaxpr.out_avals) != 1:
       msg = "cond_fun must return a boolean scalar, but got pytree {}."
       raise TypeError(msg.format(cond_out_avals.tree))
@@ -1630,8 +1631,8 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
 
   cond_dbg = api_util.debug_info("while_cond", cond_fun, (init_val,), {})
   body_dbg = api_util.debug_info("while_body", body_fun, (init_val,), {})
-  init_val_flat = FlatTree.flatten(init_val)
-  check_no_transformed_refs_args(lambda: body_dbg, init_val_flat.vals)
+  init_val_flat = ft.flatten(init_val)
+  check_no_transformed_refs_args(lambda: body_dbg, list(init_val_flat))
   del init_val
   init_aval = init_val_flat.map(core.typeof)
 
@@ -1646,8 +1647,8 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
     assert False, "shouldn't get here"
 
   init_val_flat, changed = init_val_flat.map3(
-      _promote_weak_typed_input,
-      list(init_aval), body_out_avals).unzip2()
+      list(init_aval), body_out_avals,
+      _promote_weak_typed_input).unzip2()
   if any(changed):
     init_aval = init_val_flat.map(core.typeof)
     cond_jaxpr, body_jaxpr, body_out_avals = _create_jaxpr(init_aval)

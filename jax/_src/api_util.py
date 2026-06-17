@@ -804,6 +804,10 @@ class ArgsAndKwargs[T]:
         self.kwarg_keys,
         tuple(map(doit, self.kwarg_vals)))
 
+  def map2(self, ys, f):
+    ys_iter = iter(ys)
+    return self.map(lambda x: f(x, next(ys_iter)))
+
   def unflatten(self):
     def doit(x): return x.from_left() if x.is_left else x.from_right().unflatten()
     return (tuple(map(doit, self.args)),
@@ -840,6 +844,10 @@ class ArgsAndKwargs[T]:
     map(partial(handle_arg, argnums) , enumerate(self.args))
     map(partial(handle_arg, argnames), zip(self.kwarg_keys, self.kwarg_vals))
     return tuple(bits)
+
+def args_and_kwargs_from_fts(*args_ft):
+  return ArgsAndKwargs(
+      tuple(Either.right(arg_ft) for arg_ft in args_ft), (), ())
 
 def args_and_kwargs( args, kwargs={}, static_argnums=(), static_argnames=()):
   def handle_arg(statics, i, arg):

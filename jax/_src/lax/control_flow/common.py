@@ -21,6 +21,7 @@ import os
 from typing import Any
 
 from jax._src import ad_util
+from jax._src import api_util
 from jax._src import config
 from jax._src import core
 from jax._src.interpreters import partial_eval as pe
@@ -148,9 +149,8 @@ def _make_closed_jaxpr(
     in_avals: Sequence[core.AbstractValue],
     debug_info: core.DebugInfo,
 ):
-  closed_jaxpr, _ = pe.trace_to_jaxpr(
-      traceable, FlatTree.flatten_args(*in_avals), debug_info
-  )
+  ak = api_util.args_and_kwargs(in_avals)
+  closed_jaxpr, _ = pe.trace_to_jaxpr( traceable, ak, debug_info)
   return closed_jaxpr
 
 
