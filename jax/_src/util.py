@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import abc
 from collections.abc import Callable, Iterable, Iterator, Sequence
+from dataclasses import dataclass
 import functools
 from functools import partial
 import itertools as it
@@ -782,10 +783,10 @@ class Singleton():
   def __hash__(self): return 0
   def __eq__(self, other): return self is other
 
+@dataclass(frozen=True)
 class Either():
-  def __init__(self, is_right, val):
-    self.val = val
-    self.is_right = is_right
+  is_right : bool
+  val : Any
 
   def from_left(self):
     assert not self.is_right
