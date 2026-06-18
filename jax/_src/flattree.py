@@ -112,6 +112,7 @@ class FTWithAux(FlatTree):
     assert isinstance(ft, FlatTree)
     self.ft = ft
     self.aux = aux
+  def unpack_aux(self): return self.ft, self.aux
   def __iter__(self): return iter(self.ft)
   def __len__(self): return len(self.ft)
   def _iter_update(self, xs_iter):

@@ -854,7 +854,7 @@ def args_and_kwargs_from_fts(*args_ft):
   return ArgsAndKwargs(
       tuple(Either.right(arg_ft) for arg_ft in args_ft), (), ())
 
-def args_and_kwargs( args, kwargs={}, static_argnums=(), static_argnames=()):
+def args_and_kwargs(args, kwargs={}, static_argnums=(), static_argnames=()):
   def handle_arg(statics, i, arg):
     return Either.left(arg) if i in statics else Either.right(ft.flatten(arg))
   args_ = tuple(handle_arg(static_argnums, i, arg) for i, arg in enumerate(args))
