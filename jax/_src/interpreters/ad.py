@@ -1240,7 +1240,7 @@ def jvp_jaxpr(jaxpr: core.ClosedJaxpr, nonzeros: Sequence[bool],
 def _jvp_jaxpr(jaxpr: core.ClosedJaxpr,
                nonzeros: Sequence[bool], instantiate: Sequence[bool]):
   assert len(jaxpr.in_avals) == len(nonzeros)
-  primal_avals_in = ft.flat_list(jaxpr.in_aval_qdds)
+  primal_avals_in = ft.flatten_list(jaxpr.in_aval_qdds)
   tangent_avals_in = primal_avals_in.map(lambda aval: aval.to_tangent_aval())
   nz_tangent_avals_in = tangent_avals_in.map2(nonzeros,
       lambda aval, nz: aval if nz else Zero(aval)).filter(nonzeros)

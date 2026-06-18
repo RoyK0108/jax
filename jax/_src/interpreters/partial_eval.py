@@ -2294,7 +2294,7 @@ def trace_to_jaxpr(
     debug_info: core.DebugInfo,
     *context_for_cache_key,
     requires_low=False):
-  assert isinstance(arguments, api_util.ArgsAndKwargs)
+  assert isinstance(arguments, ft.FTArgsAndKwargs)
   if config.no_tracing.value:
     raise RuntimeError(f"re-tracing function {fun} for "
                        "`jit`, but 'no_tracing' is set")

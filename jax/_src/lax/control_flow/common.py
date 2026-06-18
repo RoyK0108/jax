@@ -149,7 +149,7 @@ def _make_closed_jaxpr(
     in_avals: Sequence[core.AbstractValue],
     debug_info: core.DebugInfo,
 ):
-  ak = api_util.args_and_kwargs(in_avals)
+  ak = ft.flatten_args(*in_avals)
   closed_jaxpr, _ = pe.trace_to_jaxpr( traceable, ak, debug_info)
   return closed_jaxpr
 

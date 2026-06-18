@@ -488,7 +488,7 @@ def _trace_to_jaxpr(fun: Callable,
                     in_avals: Sequence[core.AbstractValue],
                     debug: core.DebugInfo
                     ) -> tuple[core.Jaxpr, Sequence[Any], PyTreeDef]:
-  ak = api_util.args_and_kwargs(*in_tree.unflatten(in_avals))
+  ak = ft.flatten_args_and_kwargs(*in_tree.unflatten(in_avals))
   try:
     closed_jaxpr, out_avals = pe.trace_to_jaxpr(fun, ak, debug)
   except core.ConcretizationTypeError as e:
@@ -827,7 +827,7 @@ def _transpose_jaxpr(jaxpr: core.ClosedJaxpr,
     return in_cts_nz
 
   dbg = jaxpr.jaxpr.debug_info.with_unknown_names()
-  ak = api_util.args_and_kwargs(in_avals)
+  ak = ft.flatten_args(*in_avals)
   transposed_closed_jaxpr, _ = pe.trace_to_jaxpr(transposed, ak, dbg)
   return transposed_closed_jaxpr, cell.in_cts_zero  # pyrefly: ignore[missing-attribute]
 
@@ -1011,7 +1011,7 @@ def remat3(f=None, /, policy=None, static_argnums=(), static_argnames=()):
     return partial(_remat3, policy, static_argnums, static_argnames, f)
 
 def _remat3(policy, static_argnums, static_argnames, f, *args, **kwargs):
-  ak = api_util.args_and_kwargs(
+  ak = ft.flatten_args_and_kwargs(
       args, kwargs, static_argnums, static_argnames)
   avals = ak.map(typeof)
   dbg = api_util.debug_info(
@@ -1141,7 +1141,7 @@ def custom_remat(f, f1, f2, fbwd, *, static_argnums=(), static_argnames=()):
   helper = custom_derivatives.custom_vjp(lambda _, *args: f(*args))
   helper.defvjp(f2, fbwd)
   def call(*args, **kwargs):
-    args_ft = api_util.args_and_kwargs(args, kwargs, static_argnums, static_argnames)
+    args_ft = ft.flatten_args_and_kwargs(args, kwargs, static_argnums, static_argnames)
     avals_ft = args_ft.map(typeof)
     dbg = api_util.debug_info(
         'custom_remat', f, args, kwargs, static_argnums=static_argnums,

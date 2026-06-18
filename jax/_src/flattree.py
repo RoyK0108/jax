@@ -14,12 +14,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from functools import cached_property
+from functools import cached_property, partial
 import itertools as it
 
 from jax._src import tree
 from jax._src import util
+from jax._src.util import (Either, unzip2, safe_map, safe_zip)
 from jax._src import tree_util
+
+map, unsafe_map = safe_map, map
+zip, unsafe_zip = safe_zip, zip
 
 hole = util.Singleton("_")
 
@@ -33,15 +37,30 @@ def fun_pt_to_ft(f_pt):
   def f_ft(*arg_fts): return flatten(f_pt(*(x.unflatten() for x in arg_fts)))
   return f_ft
 
-def flat_list(xs): return FTTuple(map(FTSingleton, xs))
 def flatten(pytree):
   if type(pytree) is tuple:
     return FTTuple(map(flatten, pytree))
   else:
     xs, treedef = tree.flatten(pytree)
     return FTPyTree(xs, treedef)
+def flatten_list(xs): return FTTuple(map(FTSingleton, xs))
+
+def flatten_args(*args): return flatten_args_and_kwargs(args)
+
+def flatten_args_and_kwargs(args, kwargs={}, static_argnums=(), static_argnames=()):
+  def handle_arg(statics, i, arg):
+    return Either.left(arg) if i in statics else Either.right(flatten(arg))
+  args_ = tuple(handle_arg(static_argnums, i, arg) for i, arg in enumerate(args))
+  kwargs_ = tuple((k, handle_arg(static_argnames, k, arg))
+                  for k, arg in sorted(kwargs.items()))
+  return FTArgsAndKwargs(args_, *unzip2(kwargs_))
+
 def pack(*trees): return FTTuple(trees)
 def pack2(*trees): return FTTuple(FTTuple(t) for t in trees)
+def pack_args_and_kwargs(args_ft):
+  args_ft = tuple(args_ft)
+  assert all(isinstance(arg, FlatTree) for arg in args_ft)
+  return FTArgsAndKwargs(tuple(Either.right(arg_ft) for arg_ft in args_ft), (), ())
 
 class FlatTree:
   """FlatTree is a Python OOP version of this functor:
@@ -172,3 +191,59 @@ class FTPyTree(FlatTree):
             self.xs == other.xs and self.treedef == other.treedef)
   def __hash__(self): return hash((self.xs, self.treedef))
 
+class FTArgsAndKwargs(FlatTree):
+  args : tuple[Either[Any, FlatTree[T]], ...]
+  kwarg_keys : tuple[Any, ...]
+  kwarg_vals : tuple[Either[Any, FlatTree[T]], ...]
+
+  def __init__(self, args, kwarg_keys, kwarg_vals):
+    # static args as vals (left); dynamic args as avals (right)
+    self.args = args
+    self.kwarg_keys = kwarg_keys
+    self.kwarg_vals = kwarg_vals
+
+  def _iter_update(self, xs_iter):
+    def doit(x):
+      return x if x.is_left else Either.right(x.from_right()._iter_update(xs_iter))
+    return FTArgsAndKwargs(
+        tuple(map(doit, self.args)),
+        self.kwarg_keys,
+        tuple(map(doit, self.kwarg_vals)))
+
+  def unflatten(self):
+    def doit(x): return x.from_left() if x.is_left else x.from_right().unflatten()
+    return (tuple(map(doit, self.args)),
+            {k : doit(v) for k, v in zip(self.kwarg_keys, self.kwarg_vals)})
+
+  @cached_property
+  def vals(self):
+    return [val for arg in it.chain(self.args, self.kwarg_vals)
+            if arg.is_right for val in arg.from_right()]
+
+  def __len__(self): return len(self.vals)
+  def __iter__(self): return iter(self.vals)
+
+  # TODO: revise this away
+  @cached_property
+  def tree(self): return self.tree_without_statics
+
+  # TODO: revise this away
+  @cached_property
+  def tree_without_statics(self):
+    args_tree = tree_util.treedef_tuple(
+        ft.from_right().treedef for ft in self.args if ft.is_right)
+    # TOOD: better way to do this? dict version of treedef_tuple?
+    _, kwargs_tree = tree_util.tree_flatten(
+        {k : v.from_right().map(lambda _: 0).unflatten()
+         for k, v in zip(self.kwarg_keys, self.kwarg_vals)
+         if v.is_right})
+    return tree_util.treedef_tuple((args_tree, kwargs_tree))
+
+  def bitvector(self, argnums, argnames):
+    bits = []
+    def handle_arg(i_chosen, i_arg):
+      i, arg = i_arg
+      if arg.is_right: bits.extend((i in i_chosen,) * len(arg.from_right()))
+    map(partial(handle_arg, argnums) , enumerate(self.args))
+    map(partial(handle_arg, argnames), zip(self.kwarg_keys, self.kwarg_vals))
+    return tuple(bits)

@@ -39,7 +39,7 @@ def remat_transform(policy, f, *args):
   with core.take_current_trace() as parent_trace:
     jaxpr_trace = pe.DynamicJaxprTrace(None)
     trace = RematTrace(parent_trace, jaxpr_trace, core.TraceTag(), policy)
-    ak = api_util.args_and_kwargs(args)
+    ak = ft.flatten_args(*args)
     in_tracers = ak.map(
         lambda x: RematTracer(trace, x, jaxpr_trace.new_arg(typeof(x), None)))  # type: ignore # noqa F821
     with core.set_current_trace(trace):

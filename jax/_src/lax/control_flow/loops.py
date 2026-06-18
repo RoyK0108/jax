@@ -189,7 +189,7 @@ def scan_nocarry(f: Callable[[Carry, X], tuple[Carry, Y]],
 
   x_avals = xs_avals.map(lambda aval: core.mapped_leading_aval(length, aval))
   # TODO(dougalm): promote away all weak types
-  args_avals = api_util.args_and_kwargs((x_avals,))
+  args_avals = ft.flatten_args(x_avals)
   jaxpr, y_avals = pe.trace_to_jaxpr(f, args_avals, dbg_body)
   jaxpr, consts = pe.separate_consts(jaxpr)
 
@@ -385,7 +385,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
 
   x_avals = xs_avals.map(lambda aval: core.mapped_leading_aval(length, aval))
   def _create_jaxpr(carry_avals):
-    ak = api_util.args_and_kwargs_from_fts(carry_avals, x_avals)
+    ak = ft.pack_args_and_kwargs((carry_avals, x_avals))
     jaxpr, out_avals = pe.trace_to_jaxpr(f, ak, dbg_body)
     jaxpr, consts = pe.separate_consts(jaxpr)
     if len(out_avals.unpack()) != 2:
@@ -1319,7 +1319,7 @@ def _scan_partial_eval_custom(saveable, unks_in, inst_in, eqn: core.JaxprEqn):
 
   call_jaxpr, _ = pe.trace_to_jaxpr(
       known,
-      api_util.args_and_kwargs(tuple(v.aval for v in ins_known)),
+      ft.flatten_args(*(v.aval for v in ins_known)),
       debug_info=jaxpr_known_hoist.jaxpr.debug_info)
 
   eqn_known = pe.new_jaxpr_eqn(
@@ -1439,7 +1439,7 @@ def _scan_state_partial_discharge_rule(
   dbg = jaxpr.jaxpr.debug_info._replace(arg_names=arg_names, result_paths=None)
 
   new_jaxpr, _ = pe.trace_to_jaxpr(body,
-      api_util.args_and_kwargs(in_avals),
+      ft.flatten_args(*in_avals),
       debug_info=dbg)
 
   pure_consts, carry, pure_xs = split_list(
@@ -1613,7 +1613,7 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
       pass
 
   def _create_jaxpr(init_avals):
-    ak = api_util.args_and_kwargs_from_fts(init_avals)
+    ak = ft.pack_args_and_kwargs((init_avals,))
     cond_jaxpr, cond_out_avals = pe.trace_to_jaxpr(cond_fun, ak, cond_dbg)
     body_jaxpr, body_out_avals = pe.trace_to_jaxpr(body_fun, ak, body_dbg)
     if not treedef_is_leaf(cond_out_avals.tree) or len(cond_jaxpr.out_avals) != 1:
@@ -2303,7 +2303,7 @@ def _while_partial_discharge_rule(should_discharge, in_avals, out_avals, *args,
 
   new_body_jaxpr, _ = pe.trace_to_jaxpr(
       new_body,
-      FlatTree.flatten_args(*remaining_body_const_avals,
+      ft.flatten_args(*remaining_body_const_avals,
           *[a.inner_aval for a in body_ref_avals],
           *[a.inner_aval for a in cond_ref_avals],
           *carry_avals),
@@ -2331,7 +2331,7 @@ def _while_partial_discharge_rule(should_discharge, in_avals, out_avals, *args,
 
   new_cond_jaxpr, _ = pe.trace_to_jaxpr(
       new_cond,
-      FlatTree.flatten_args(*remaining_cond_const_avals,
+      ft.flatten_args(*remaining_cond_const_avals,
           *[a.inner_aval for a in body_ref_avals],
           *[a.inner_aval for a in cond_ref_avals],
           *carry_avals),

@@ -3238,9 +3238,7 @@ def _reduction_jaxpr(computation: Callable,
           f"Full return value: {result}")
     return (result,)
   dbg = api_util.debug_info('reduction_jaxpr', computation, (aval, aval), {})
-  closed_jaxpr, _ = pe.trace_to_jaxpr(
-      comp, api_util.args_and_kwargs((aval, aval)), dbg
-  )
+  closed_jaxpr, _ = pe.trace_to_jaxpr( comp, ft.flatten_args(aval, aval), dbg)
   if any(isinstance(c, core.Tracer) for c in closed_jaxpr.consts):
     raise NotImplementedError(
         "Reduction computations can't close over Tracers. Please open an issue "
@@ -3258,7 +3256,7 @@ def _variadic_reduction_jaxpr(computation: Callable[[Any, Any], Any],
     xs, ys = tree_util.tree_unflatten(in_tree, flat_args)
     return computation(xs, ys)
 
-  in_avals_flat_tree = api_util.args_and_kwargs(flat_in_avals)
+  in_avals_flat_tree = ft.flatten_args(*flat_in_avals)
   closed_jaxpr, out_avals = pe.trace_to_jaxpr(
       flat_computation, in_avals_flat_tree, debug_info
   )

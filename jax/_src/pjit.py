@@ -49,7 +49,7 @@ from jax._src.core import typeof, cur_qdd
 from jax._src.api_util import (
     flatten_axes, donation_vector, check_callable, resolve_argnums, debug_info,
     check_no_aliased_ref_args, _check_no_aliased_closed_over_refs,
-    flatten_axis_resources, args_and_kwargs)
+    flatten_axis_resources)
 from jax._src.interpreters import partial_eval as pe
 from jax._src.partition_spec import PartitionSpec
 from jax._src.interpreters import ad
@@ -468,7 +468,7 @@ class PjitParams(NamedTuple):
 def _trace_for_jit(
     fun: Callable, ji: PjitInfo, ctx_mesh: mesh_lib.Mesh,
     dbg: core.DebugInfo, avals, args, kwargs) -> PjitParams:
-  ak = args_and_kwargs(
+  ak = ft.flatten_args_and_kwargs(
       args, kwargs, ji.static_argnums, ji.static_argnames).update(avals)
   has_kwargs = bool(kwargs)
   if has_kwargs and ji.user_specified_in_shardings:

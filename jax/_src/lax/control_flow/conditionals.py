@@ -268,7 +268,7 @@ def cond(pred, true_fun: Callable, false_fun: Callable, *operands,
     else:
       return false_fun(*operands)
 
-  args = api_util.args_and_kwargs(operands)
+  args = ft.flatten_args(*operands)
   dbg_true = api_util.debug_info("cond", true_fun, operands, {})
   api_util.check_no_transformed_refs_args(lambda: dbg_true, args.vals)
   avals = args.map(core.typeof)
@@ -866,7 +866,7 @@ def _transpose_jaxpr_fancy(jaxpr, in_tree, in_avals, specs, inst_out):
     return cts_out
   dbg = jaxpr.jaxpr.debug_info.with_unknown_names()
   closed_jaxpr, out_avals = pe.trace_to_jaxpr(
-      transposed, api_util.args_and_kwargs(in_avals), dbg
+      transposed, ft.flatten_args(*in_avals), dbg
   )
   return closed_jaxpr, out_avals.tree
 

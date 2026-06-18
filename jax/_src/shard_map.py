@@ -792,7 +792,7 @@ def _shard_map_staging(
   source_info = source_info_util.current()
 
   inner_mesh = _as_manual_mesh(mesh, newly_manual_axes)
-  in_avals = ft.flat_list(args).map(typeof)
+  in_avals = ft.flatten_list(args).map(typeof)
   in_avals_ = in_avals.map2(
       in_specs,
       lambda aval, spec: shard_aval(mesh, newly_manual_axes, check_vma, spec, aval))
@@ -1624,7 +1624,7 @@ def _shard_map_jvp(trace, shard_map_p, f, tracers, mesh, in_specs,
     tangent_out_specs = [s.to_tangent_spec() for s, nz in zip(out_ax, which_nz_out) if nz]
     new_out_specs = (*out_ax, *tangent_out_specs)
     tangents_out = [None if not nz else t for t, nz in zip(tangents_out, which_nz_out)]
-    tangents_out_ft = ft.flat_list(tangents_out)
+    tangents_out_ft = ft.flatten_list(tangents_out)
     out_primals_tangents = ft.pack(primals_out_ft, tangents_out_ft)
     return out_primals_tangents.with_aux(which_nz_out).with_aux(new_out_specs)
 
@@ -1807,7 +1807,7 @@ def _promote_scalar_residuals_jaxpr(jaxpr: core.Jaxpr, which: Sequence[bool]):
     return core.eval_jaxpr(jaxpr, res, *args)
   res_avals = [core.unmapped_aval(1, 0, v.aval) if w else v.aval
                for v, w in zip(jaxpr.constvars, which)]
-  in_avals = api_util.args_and_kwargs((*res_avals, *[v.aval for v in jaxpr.invars]))
+  in_avals = ft.flatten_args(*res_avals, *[v.aval for v in jaxpr.invars])
   closed_jaxpr, _ = pe.trace_to_jaxpr(fun, in_avals, debug_info=jaxpr.debug_info)
   closed_jaxpr, _ = pe.separate_consts(closed_jaxpr)
   return closed_jaxpr.jaxpr
