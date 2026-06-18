@@ -107,7 +107,6 @@ class FlatTree:
       return self.update([()] * len(self))  # not our fault
 
 class FTTuple(FlatTree):
-
   def __init__(self, trees):
     trees = trees if isinstance(trees, tuple) else tuple(trees)
     for t in trees: assert isinstance(t, FlatTree)
