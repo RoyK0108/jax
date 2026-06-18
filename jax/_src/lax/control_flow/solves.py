@@ -272,7 +272,7 @@ def custom_linear_solve(
   matvec_debug = api_util.debug_info("custom_linear_solve",
                                      matvec, (b,), {})
   # no auxiliary data assumed for matvec
-  args_avals = ft.pack_args((b_avals,))
+  args_avals = ft.pack_args_and_kwargs((b_avals,))
   matvec_jaxpr, out_avals = pe.trace_to_jaxpr(
       _shape_checked(matvec, "matvec", False), args_avals,
       matvec_debug)
