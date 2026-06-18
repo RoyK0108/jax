@@ -803,3 +803,9 @@ class Either():
 
   @staticmethod
   def right(x): return Either(True, x)
+
+  def __repr__(self):
+    if self.is_left:
+      return f"Left({self.val})"
+    else:
+      return f"Right({self.val})"

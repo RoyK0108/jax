@@ -1388,6 +1388,8 @@ def jvp(
       not isinstance(tangents, (tuple, list))):
     raise TypeError("primal and tangent arguments to jax.jvp must be tuples or lists; "
                     f"found {type(primals).__name__} and {type(tangents).__name__}.")
+  primals = primals if isinstance(primals, tuple) else tuple(primals)
+  tangents = tangents if isinstance(tangents, tuple) else tuple(tangents)
   return _jvp(fun, primals, tangents, has_aux=has_aux)
 
 def _jvp(fun: Callable, primals, tangents, has_aux=False):

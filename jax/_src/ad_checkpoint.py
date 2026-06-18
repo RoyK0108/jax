@@ -29,6 +29,7 @@ from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src import effects
+from jax._src import flattree as ft
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import api_util
@@ -45,7 +46,6 @@ from jax._src.lib.mlir.dialects import hlo
 from jax._src.state import discharge
 from jax._src.state.types import AbstractRef
 from jax._src.traceback_util import api_boundary
-from jax._src import flattree as ft
 from jax._src.tree_util import (
     PyTreeDef, tree_flatten, tree_unflatten, tree_structure, broadcast_prefix,
     tree_map, tree_leaves, tree_leaves_checked, Partial, tracing_registry)
@@ -381,17 +381,18 @@ def checkpoint(fun: Callable, *, prevent_cse: bool | Sequence[bool] = True,
     debug = api_util.debug_info(
         "checkpoint / remat", fun,
         args, kwargs, static_argnums=static_argnums)
-    ak = api_util.args_and_kwargs(args, kwargs, static_argnums=static_argnums)
-    api_util.check_no_transformed_refs_args(lambda: debug, list(ak))
-    in_avals = ak.map(core.shaped_abstractify)
-    jaxpr, consts, out_tree = _trace_to_jaxpr(fun, in_avals, debug)
+    fun_, args = _remat_static_argnums(fun, static_argnums, args)
+    args_flat, in_tree = tracing_registry.flatten((args, kwargs))
+    api_util.check_no_transformed_refs_args(lambda: debug, args_flat)
+    in_avals = [core.shaped_abstractify(x) for x in args_flat]
+    jaxpr, consts, out_tree = _trace_to_jaxpr(fun_, in_tree, tuple(in_avals), debug)
     if isinstance(prevent_cse, tuple):
       cse_args = (tuple(args), kwargs) if kwargs else tuple(args)
       cse = (False,) * len(consts) + tuple(broadcast_prefix(prevent_cse, cse_args))
     else:
       cse = prevent_cse
     out_flat = remat_p.bind(
-        *consts, *ak, jaxpr=jaxpr, prevent_cse=cse, differentiated=False,
+        *consts, *args_flat, jaxpr=jaxpr, prevent_cse=cse, differentiated=False,
         policy=policy)
     return tree_unflatten(out_tree, out_flat)
   return fun_remat
@@ -404,6 +405,36 @@ def remat(fun: Callable, *, prevent_cse: bool = True,
   """Alias of :func:`jax.checkpoint`."""
   return checkpoint(fun, prevent_cse=prevent_cse, policy=policy,
                     static_argnums=static_argnums, concrete=concrete)
+
+# This function is similar to api_util.argnums_partial, except the error
+# messages are specific to jax.remat (and thus more actionable), the
+# hashing/caching behavior is slightly different, and this function accepts a
+# boolean for static_argnums. Perhaps the two could be de-duplicated.
+def _remat_static_argnums(fun, static_argnums, args):
+  if type(static_argnums) is int:
+    static_argnums = (static_argnums,)
+  elif not (type(static_argnums) is tuple and
+            all(type(d) is int for d in static_argnums)):
+    raise TypeError("the `static_argnums` argument to `jax.checkpoint` / "
+                    "`jax.remat` must be an int, tuple of ints or, bool, but "
+                    f"got value {static_argnums}")
+
+  if not all(-len(args) <= d < len(args) for d in static_argnums):
+    raise ValueError("the `static_argnums` argument to `jax.checkpoint` / "
+                     "`jax.remat` can only take integer values greater than or "
+                     "equal to `-len(args)` and less than `len(args)`, but got "
+                     f"{static_argnums}, while `len(args)` = {len(args)}")
+
+  if not static_argnums:
+    return fun, args
+  nargs = len(args)
+  static_argnums_ = frozenset(d % len(args) for d in static_argnums)
+  dyn_args, static_args = [], []
+  for i, x in enumerate(args):
+    if i in static_argnums_: static_args.append(WrapHashably(x))
+    else: dyn_args.append(x)
+  new_fun = _dyn_args_fun(fun, static_argnums_, tuple(static_args), nargs)
+  return new_fun, dyn_args
 
 class WrapHashably:
   val: Any
@@ -453,9 +484,11 @@ _dyn_args_fun_cached = weakref_lru_cache(_dyn_args_fun_uncached)
 # remat-specific errors.
 @weakref_lru_cache
 def _trace_to_jaxpr(fun: Callable,
-                    ak: api_util.ArgsAndKwargs[core.AbstractValue],
+                    in_tree: PyTreeDef,
+                    in_avals: Sequence[core.AbstractValue],
                     debug: core.DebugInfo
                     ) -> tuple[core.Jaxpr, Sequence[Any], PyTreeDef]:
+  ak = api_util.args_and_kwargs(*in_tree.unflatten(in_avals))
   try:
     closed_jaxpr, out_avals = pe.trace_to_jaxpr(fun, ak, debug)
   except core.ConcretizationTypeError as e:
@@ -794,7 +827,7 @@ def _transpose_jaxpr(jaxpr: core.ClosedJaxpr,
     return in_cts_nz
 
   dbg = jaxpr.jaxpr.debug_info.with_unknown_names()
-  ak = api_util.args_and_kwargs(tuple(in_avals))
+  ak = api_util.args_and_kwargs(in_avals)
   transposed_closed_jaxpr, _ = pe.trace_to_jaxpr(transposed, ak, dbg)
   return transposed_closed_jaxpr, cell.in_cts_zero  # pyrefly: ignore[missing-attribute]
 
@@ -1108,8 +1141,7 @@ def custom_remat(f, f1, f2, fbwd, *, static_argnums=(), static_argnames=()):
   helper = custom_derivatives.custom_vjp(lambda _, *args: f(*args))
   helper.defvjp(f2, fbwd)
   def call(*args, **kwargs):
-    args_ft = FlatTree.flatten_static_argnums_argnames(
-        args, kwargs, static_argnums, static_argnames)
+    args_ft = api_util.args_and_kwargs(args, kwargs, static_argnums, static_argnames)
     avals_ft = args_ft.map(typeof)
     dbg = api_util.debug_info(
         'custom_remat', f, args, kwargs, static_argnums=static_argnums,

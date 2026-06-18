@@ -836,7 +836,8 @@ class ArgsAndKwargs[T]:
         ft.from_right().treedef for ft in self.args if ft.is_right)
     # TOOD: better way to do this? dict version of treedef_tuple?
     _, kwargs_tree = tree_flatten(
-        {k : v.from_right() for k, v in zip(self.kwarg_keys, self.kwarg_vals)
+        {k : v.from_right().map(lambda _: 0).unflatten()
+         for k, v in zip(self.kwarg_keys, self.kwarg_vals)
          if v.is_right})
     return treedef_tuple((args_tree, kwargs_tree))
 
