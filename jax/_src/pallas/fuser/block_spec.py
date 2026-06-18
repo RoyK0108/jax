@@ -1146,13 +1146,24 @@ def _offset_indexer(
     indexer,
     slice_start,
     slice_size,
+    *,
+    deoffset: bool = False,
 ):
   # Short-circuit if the slice start is just at zero.
   if isinstance(slice_start, int) and slice_start == 0:
     return indexer
+
+  def _apply(val, offset, limit=None):
+    if deoffset:
+      res = val - offset
+      if limit is not None:
+        return jnp.clip(res, 0, limit - 1)
+      return res
+    return val + offset
+
   match bs:
     case None | pallas_core.Squeezed():
-      return indexer + slice_start
+      return _apply(indexer, slice_start, slice_size)
     case pallas_core.Element(block_size):
       _maybe_static_check(
           slice_start % block_size == 0,
@@ -1162,7 +1173,7 @@ def _offset_indexer(
           slice_size % block_size == 0,
           f'slice_size is not a multiple of block_size {block_size}',
       )
-      return indexer + slice_start
+      return _apply(indexer, slice_start, slice_size)
     case int() | pallas_core.Blocked():
       block_size = _block_size(bs)
       _maybe_static_check(
@@ -1173,9 +1184,13 @@ def _offset_indexer(
           slice_size % block_size == 0,
           f'slice_size is not a multiple of block_size {block_size}',
       )
-      # indexer is a block index so we need to offset it by the block offset.
-      return indexer + slice_start // block_size
+      num_blocks = slice_size // block_size
+      return _apply(indexer, slice_start // block_size, num_blocks)
     case pallas_core.BoundedSlice(block_size):
+      if deoffset:
+        raise NotImplementedError(
+            'BoundedSlice not supported in dynamic_update_slice yet'
+        )
       assert isinstance(indexer, indexing.Slice)
       _maybe_static_check(
           indexer.start % block_size == 0,
@@ -1318,6 +1333,97 @@ def _dynamic_slice_rule(
       block_index_transform=new_block_index_transform,
   )
   return [new_block_transform] + [no_block_index_transform] * (len(ctx.avals_in) - 1)
+
+
+@register_usage_rule(lax.dynamic_update_slice_p)
+def _dynamic_update_slice_usage_rule(ctx, used_out: set[Usage], **params):
+  del params
+  if used_out == {Usage.SCALAR_PREFETCH}:
+    raise NotImplementedError('scalar prefetch not supported yet')
+  elif used_out == {Usage.REGULAR}:
+    usage = [used_out, used_out] + [{Usage.SCALAR_PREFETCH}] * (
+        len(ctx.avals_in) - 2
+    )
+    return usage
+  else:
+    return [set()] * len(ctx.avals_in)
+
+
+@register_eval_rule(lax.dynamic_update_slice_p)
+def _dynamic_update_slice_eval_rule(
+    ctx: KernelEvalContext, operand, update, *start_indices, **params
+):
+  del params
+  out_indices = ctx.get_out_block_indices()[0]
+  out_block_spec = ctx.out_block_specs[0]
+  block_shape = out_block_spec.block_shape
+
+  if operand.shape != update.shape:
+    raise NotImplementedError(
+        f'dynamic_update_slice only supports matching block shapes, got '
+        f'{operand.shape} and {update.shape}. Please ensure that all '
+        f'dimensions where the update is smaller than the operand are blocked '
+        f'compatibly.'
+    )
+
+  is_inside_list = []
+  update_full_shape = ctx.avals_in[1].shape
+  for out_idx, start, block_size, update_size in zip(
+      out_indices, start_indices, block_shape, update_full_shape, strict=True
+  ):
+    if block_size is None or isinstance(block_size, pallas_core.Squeezed):
+      is_inside_list.append(True)
+    else:
+      block_size_val = _block_size(block_size)
+      block_start_idx = start // block_size_val
+      block_update_num_blocks = update_size // block_size_val
+      is_inside_i = (block_start_idx <= out_idx) & (
+          out_idx < block_start_idx + block_update_num_blocks
+      )
+      is_inside_list.append(is_inside_i)
+
+  is_inside = functools.reduce(jnp.logical_and, is_inside_list)
+  return jax.lax.select(is_inside, update, operand)
+
+
+@register_pull_block_spec_rule(lax.dynamic_update_slice_p)
+def _dynamic_update_slice_pull_rule(
+    ctx: PullRuleContext,
+    block_transform: BlockIndexTransform,
+    **params,
+):
+  del params
+  operand_aval = ctx.avals_in[0]
+  update_aval = ctx.avals_in[1]
+  assert isinstance(operand_aval, core.ShapedArray)
+  assert isinstance(update_aval, core.ShapedArray)
+
+  operand_block_transform = block_transform
+
+  def new_update_block_index_transform(*idxs):
+    slice_starts = ctx.scalar_prefetch_fn()
+    idx = block_transform.block_index_transform(*idxs)
+    assert len(idx) == len(block_transform.block_shape)
+
+    block_indices = tuple(
+        _offset_indexer(s, i, start, size, deoffset=True)
+        for i, s, start, size in zip(
+            idx,
+            block_transform.block_shape,
+            slice_starts,
+            update_aval.shape,
+            strict=True,
+        )
+    )
+    return block_indices
+
+  update_block_transform = block_transform.replace(
+      block_index_transform=new_update_block_index_transform,
+  )
+
+  return [operand_block_transform, update_block_transform] + [
+      no_block_index_transform
+  ] * (len(ctx.avals_in) - 2)
 
 
 @register_pull_block_spec_rule(lax.dot_general_p)
@@ -2831,6 +2937,22 @@ register_eltwise_rule(lax.log_p)
 register_eltwise_rule(lax.integer_pow_p)
 register_eltwise_rule(lax.logistic_p)
 register_eltwise_rule(pallas_primitives.multiple_of_p)
+
+
+@register_push_block_spec_rule(lax.dynamic_update_slice_p)
+def _dynamic_update_slice_push_rule(
+    ctx: PushRuleContext,
+    operand_block_spec: pallas_core.BlockSpec,
+    update_block_spec: pallas_core.BlockSpec,
+    *start_indices_specs,
+    **params,
+) -> pallas_core.BlockSpec:
+  del ctx, start_indices_specs, params
+  if operand_block_spec is not pallas_core.no_block_spec:
+    return operand_block_spec
+  if update_block_spec is not pallas_core.no_block_spec:
+    return update_block_spec
+  raise ValueError('At least one of operand or update must have a block spec')
 
 
 @register_push_block_spec_rule(lax.reshape_p)

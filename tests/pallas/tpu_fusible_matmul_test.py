@@ -1183,6 +1183,56 @@ class FusibleMatmulTest(jtu.JaxTestCase):
         atol=0.4,
     )
 
+  @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
+  def test_matmul_dynamic_update_slice_before(self, dtype, impl):
+    k0, k1, k2 = jax.random.split(jax.random.key(0), 3)
+    x = jax.random.normal(k0, (512, 512), dtype)
+    update = jax.random.normal(k1, (128, 512), dtype)
+    y = jax.random.normal(k2, (512, 512), dtype)
+    start_idx = 128
+
+    @jax.jit
+    @fuser.fuse
+    def matmul_dus(x, update, y, start_idx):
+      x_updated = jax.lax.dynamic_update_slice(x, update, (start_idx, 0))
+      return fusible_matmul(x_updated, y, bm=128, bk=128, bn=128, impl=impl)
+
+    @jit_no_excess_precision
+    def matmul_dus_ref(x, update, y, start_idx):
+      x_updated = jax.lax.dynamic_update_slice(x, update, (start_idx, 0))
+      return mm_ref(x_updated, y)
+
+    np.testing.assert_allclose(
+        matmul_dus(x, update, y, start_idx),
+        matmul_dus_ref(x, update, y, start_idx),
+        atol=5e-5,
+    )
+
+  @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
+  def test_matmul_dynamic_update_slice_after(self, dtype, impl):
+    k0, k1, k2 = jax.random.split(jax.random.key(0), 3)
+    x = jax.random.normal(k0, (128, 512), dtype)
+    y = jax.random.normal(k1, (512, 512), dtype)
+    operand = jax.random.normal(k2, (128, 512), dtype)
+    start_idx = 0
+
+    @jax.jit
+    @fuser.fuse
+    def matmul_dus(x, y, operand, start_idx):
+      z = fusible_matmul(x, y, bm=128, bk=128, bn=128, impl=impl).astype(dtype)
+      return jax.lax.dynamic_update_slice(operand, z, (start_idx, 0))
+
+    @jit_no_excess_precision
+    def matmul_dus_ref(x, y, operand, start_idx):
+      z = mm_ref(x, y).astype(dtype)
+      return jax.lax.dynamic_update_slice(operand, z, (start_idx, 0))
+
+    np.testing.assert_allclose(
+        matmul_dus(x, y, operand, start_idx),
+        matmul_dus_ref(x, y, operand, start_idx),
+        atol=5e-5,
+    )
+
 
 def dot_ref(x, y, *, bm=128, bk=128, bn=128):
   # Meant to precisely mimic the numerics of the kernel
