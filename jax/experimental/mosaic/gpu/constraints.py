@@ -27,7 +27,6 @@ import numpy as np
 
 from . import dialect_lowering as lowering
 from . import fragmented_array as fa
-from . import inference_utils
 from . import launch_context as lc
 from . import layouts as layouts_lib
 from . import tcgen05
@@ -104,7 +103,7 @@ class SMEMTransforms:
   """
 
   tiling: lc.TileTransform | None
-  swizzle: Literal[32, 64, 128] | None = None
+  swizzle: Literal[32, 64, 128] | None
 
   def __post_init__(self):
     if self.swizzle and self.swizzle not in {32, 64, 128}:
@@ -684,10 +683,10 @@ class IsTransferableSmemRegisters(IsTransferable):
       reg_layout: fa.FragmentedLayout,
   ) -> bool:
     tiling_transform = smem_layout.tiling
-    assert smem_layout.swizzle is None
+    swizzle = smem_layout.swizzle
 
     if not isinstance(reg_layout, fa.TiledLayout):
-      return tiling_transform is None
+      return tiling_transform is None and swizzle is None
     if len(self.strides) < 2:
       smem_transposed = False
     else:
@@ -715,12 +714,8 @@ class IsTransferableSmemRegisters(IsTransferable):
       tiling = self.shape
       tiling_rank = len(tiling)
       tiled_strides = lowering.tile_strides(self.strides, tiling)
-      # Mirrors the logic in `swap_p` and `get_p` lowering, in the untiled case.
-      swizzle = 16
     else:
       tiled_strides = lowering.tile_strides(self.strides, tiling)
-      minor_tiling = tiling[np.argmin(tiled_strides[-len(tiling):])]
-      swizzle = inference_utils.compute_swizzle(minor_tiling, self.bitwidth)
 
     first_tiled_dim = len(self.shape) - tiling_rank
     nested_ref_shape = tuple(
@@ -738,7 +733,7 @@ class IsTransferableSmemRegisters(IsTransferable):
 
     try:
       fa.plan_tiled_transfer(nested_ref_shape, nested_ref_strides,
-                             reg_layout, self.bitwidth, swizzle)
+                             reg_layout, self.bitwidth, swizzle or 16)
       return True
     except fa.TransferPlanDerivationError:
       return False
@@ -905,10 +900,12 @@ class IsValidMmaTiling(_BaseConstraint):
     match self.expr:
       case SMEMTransforms(tiling=None):
         return False
-      case SMEMTransforms(tiling=lc.TileTransform(tiling=t)):
-        swizzles = [16, 32, 64, 128] if self.allow_unswizzled else [32, 64, 128]
-        valid_tilings = {(8, s * 8 // self.bitwidth) for s in swizzles}
-        return t in valid_tilings
+      case SMEMTransforms(tiling=lc.TileTransform(tiling=t), swizzle=None):
+        no_swizzle = 16
+        return self.allow_unswizzled and t == (8, no_swizzle * 8 // self.bitwidth)
+      case SMEMTransforms(tiling=lc.TileTransform(tiling=t), swizzle=swizzle):
+        assert swizzle is not None  # satisfy the type checker
+        return t == (8, swizzle * 8 // self.bitwidth)
       case RegisterLayout() | TMEMLayout() | SMEMTransforms():
         raise ValueError(f"Unexpected value {self.expr} in IsValidMmaTiling constraint")
       case _ as never:
@@ -1333,56 +1330,46 @@ def _is_valid_smem_layout_assignment(
   assert var.memory_space == MemorySpace.SMEM
   if tiling and not tiling.tiling:
     raise NotImplementedError("Empty tiling unsupported")
+  untiled_and_unswizzled = tiling is None and swizzle is None
   # Scalar in SMEM is only valid if it's unswizzled and untiled.
   if not var.shape:
-    return tiling is None and swizzle is None
+    return untiled_and_unswizzled
+  # For non-scalar no swizzle and no tiling means it's always a valid assignment
+  if untiled_and_unswizzled:
+    return True
 
   ref_ty = var.key.value.type
   strides, _ = ref_ty.get_strides_and_offset()
 
-  # TODO(olechwierowicz): We raise if we encounter duplicate unit dim strides.
-  # In the code below we want to check the divisibility of the minor dimension
-  # by a number of swizzle elements to check for SMEM aligment.
-  # The problem is that a shape with a unit trailing dim has duplicate
-  # strides of 1 (e.g. shape (128, 1) has strides (1, 1)).
-  # Therefore it's not possible to recover the minor dimension, since
-  # the memref can always be logically transposed.
-  #
-  # The check below can be lifted if we implement the following logic:
-  # 1. Check if we can tile the shape.
-  # 2. Check swizzle against the minor dimension if it is unique.
-  # 3. If the minor dimension is not unique, check swizzle against the single
-  #    non-1 dimension if the operation is not `slice_smem`.
-  # 4. If the operation is `slice_smem`, check the trailing dimension against
-  #    the swizzle.
   min_stride = np.min(strides)
   if min_stride != 1:
     raise NotImplementedError("We cannot apply swizzle to non-contiguous refs")
-  if strides.count(min_stride) > 1:
-    raise NotImplementedError("Duplicated strides are unsupported.")
-
-  bitwidth = utils.bitwidth(ref_ty.element_type)
-  swizzle_elems = 8 * swizzle // bitwidth if swizzle is not None else None
-  if tiling is None:
-    # No swizzle and no tiling means it's always a valid assignment.
-    if swizzle_elems is None:
-      return True
-    # Otherwise, swizzle exist and we're dealing with non-scalar.
-    # We check the divisibility of the minor most dim.
-    minor_dim_index = np.argmin(strides)
-    assert var.shape
-    return var.shape[minor_dim_index] % swizzle_elems == 0
-  tiling_v = tiling.tiling
+  if tiling:
+    tiling_v = tiling.tiling
+  else:
+    tiling_v = var.shape
+    tiling = lc.TileTransform(tiling_v)
   try:
     # `tiling.transform_shape` will raise if the shape is not tileable.
     _ = tiling.transform_shape(var.shape)
-    tiled_strides = lowering.tile_strides(strides, tiling_v)
-    minor_tiling_dim_index = np.argmin(tiled_strides[-len(tiling_v):])
-    if swizzle_elems:
-      return tiling.tiling[minor_tiling_dim_index] % swizzle_elems == 0
   except ValueError:
     return False
-  return True
+
+  # Shape is tileable at this point, we accept if there's no swizzle.
+  if not swizzle:
+    return True
+
+  # Memref slice does not preserve strides, we always look at the minormost dim.
+  # This is necessary to correctly select the minormost dim for duplicated
+  # unit-dim strides. For non slices we select the largest dim with stride eq 1.
+  if isinstance(var.key.operation, lowering.mgpu.SliceSMEMOp):
+    minor_tiling_dim_index = -1
+  else:
+    tiled_strides = lowering.tile_strides(strides, tiling_v)
+    minor_tiling_dim_index = np.argmin(tiled_strides[-len(tiling_v):])
+  bitwidth = utils.bitwidth(ref_ty.element_type)
+  swizzle_elems = 8 * swizzle // bitwidth
+  return tiling.tiling[minor_tiling_dim_index] % swizzle_elems == 0
 
 
 def _is_valid_tmem_layout_assignment(
